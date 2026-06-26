@@ -1,3 +1,7 @@
+# Affiliation metric (Huet et al. KDD 2022) — required for primary ESA metric
+# Install: pip install git+https://github.com/ahstat/affiliation-metrics-py.git
+affiliation-metrics @ git+https://github.com/ahstat/affiliation-metrics-py.git
+
 # Core deep learning
 torch>=2.1.0
 torchvision>=0.16.0

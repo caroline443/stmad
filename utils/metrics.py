@@ -1,27 +1,30 @@
 """
-Evaluation Metrics for Time-Series Anomaly Detection.
+Evaluation Metrics — fully aligned with PSTG (Chen et al., Entropy 2026).
 
-Implements the metrics used in PSTG (Chen et al., 2026) and other
-top-tier anomaly detection benchmarks:
+Two primary metrics (no point adjustment):
 
-1. Point-wise metrics (F1, Precision, Recall, AUC-ROC)
-   — standard, allows comparison with GDN / ContrastAD / FuSAGNet
+1. Event-wise F0.5
+   Definition follows the ESA-AD benchmark (Kotowski et al., 2024).
+   A predicted event is a TP if it overlaps any GT anomaly event.
+   A GT event is recalled if any predicted event overlaps it.
+   Multiple predictions covering the same GT event count as 1 recall TP.
 
-2. Event-wise F-beta (no point adjustment)
-   — detects if anomaly *events* are identified; controls false alarms
-   — PSTG reports Event-wise F0.5 = 0.917
+2. Affiliation-based F0.5
+   Exact implementation of Huet et al. (KDD 2022) via the official library.
+   Measures boundary proximity and coverage completeness.
+   Uses the `affiliation-metrics` library when available; raises if not installed.
 
-3. Affiliation-based F-beta
-   — measures temporal localisation quality via boundary proximity
-   — PSTG reports Affiliation F0.5 = 0.892
+Installation:
+    pip install git+https://github.com/ahstat/affiliation-metrics-py.git
 
 References
 ----------
-Huet et al. (2022), "Local Evaluation of Time Series Anomaly Detection
-Algorithms", KDD 2022.  (affiliation metric)
-
-Point adjustment is deliberately NOT applied in the primary evaluation
-to match PSTG's no-PA protocol.
+Huet et al. (2022) "Local Evaluation of Time Series Anomaly Detection
+  Algorithms", KDD 2022.  https://github.com/ahstat/affiliation-metrics-py
+Kotowski et al. (2024) "European Space Agency Benchmark for Anomaly
+  Detection in Satellite Telemetry", arXiv 2406.xxxxx.
+Chen et al. (2026) "Progressive Spatiotemporal Graph Modelling for
+  Spacecraft Anomaly Detection", Entropy 28, 426.
 """
 
 from __future__ import annotations
@@ -30,158 +33,186 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, precision_recall_fscore_support
 
 
-# ── Helper: extract contiguous events ─────────────────────────────────────────
+# ── Affiliation library (required for primary metric) ─────────────────────────
+
+try:
+    from affiliation.generics import convert_vector_to_events as _cvt
+    from affiliation.metrics  import pr_from_events            as _pr
+    _AFFILIATION_AVAILABLE = True
+except ImportError:
+    _AFFILIATION_AVAILABLE = False
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _extract_events(binary: np.ndarray) -> list[tuple[int, int]]:
-    """Return list of (start, end) inclusive indices of contiguous 1-runs."""
-    events = []
+    """Return contiguous 1-runs as (start, end_exclusive) tuples.
+
+    Matches the convention used by the affiliation-metrics library:
+        events_pred = [(4, 5), (8, 9)]  ← half-open intervals
+    """
+    events: list[tuple[int, int]] = []
     in_event = False
+    start = 0
     for i, v in enumerate(binary):
-        if v == 1 and not in_event:
-            start = i
+        if v and not in_event:
+            start    = i
             in_event = True
-        elif v == 0 and in_event:
-            events.append((start, i - 1))
+        elif not v and in_event:
+            events.append((start, i))   # [start, i)  ← i is exclusive
             in_event = False
     if in_event:
-        events.append((start, len(binary) - 1))
+        events.append((start, len(binary)))
     return events
 
 
-# ── Event-wise metrics ────────────────────────────────────────────────────────
+def _fbeta(precision: float, recall: float, beta: float = 0.5) -> float:
+    if precision + recall == 0:
+        return 0.0
+    b2 = beta ** 2
+    return (1 + b2) * precision * recall / (b2 * precision + recall)
+
+
+# ── 1. Event-wise F0.5 ────────────────────────────────────────────────────────
 
 def event_wise_fbeta(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     beta: float = 0.5,
 ) -> dict[str, float]:
-    """Event-level precision / recall / F-beta.
+    """Event-level Precision / Recall / F-beta.
 
-    A predicted event (contiguous run of 1s) is a true positive if it
-    overlaps with *at least one* ground-truth anomaly event.
-
-    A ground-truth event is recalled if *at least one* predicted event
-    overlaps it.
+    Matching rule (ESA-AD / Kotowski 2024):
+      - A predicted event is a True Positive  if it overlaps ≥1 GT event.
+      - A GT event     is a True Positive  if it is overlapped by ≥1 prediction.
+      - Multiple predictions covering the same GT event  → 1 recall TP.
+      - Multiple GT events covered by the same prediction → 1 precision TP
+        (the prediction is still one event).
 
     Args:
-        y_true: binary ground-truth labels (T,)
-        y_pred: binary predictions (T,)
-        beta:   F-beta beta (0.5 = precision-weighted)
+        y_true: binary ground-truth  (T,)
+        y_pred: binary predictions   (T,)
+        beta:   F-beta parameter (0.5 = precision-weighted)
 
     Returns:
-        dict with keys: precision, recall, f_score
+        {"precision": …, "recall": …, "f_score": …, "n_gt": …, "n_pred": …}
     """
     gt_events   = _extract_events(y_true)
     pred_events = _extract_events(y_pred)
 
-    if not pred_events:
-        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
-    if not gt_events:
-        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
+    n_gt   = len(gt_events)
+    n_pred = len(pred_events)
 
-    def overlaps(e1: tuple[int, int], e2: tuple[int, int]) -> bool:
-        return e1[0] <= e2[1] and e2[0] <= e1[1]
+    if n_gt == 0 and n_pred == 0:
+        return {"precision": 1.0, "recall": 1.0, "f_score": 1.0,
+                "n_gt": 0, "n_pred": 0}
+    if n_gt == 0 or n_pred == 0:
+        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0,
+                "n_gt": n_gt, "n_pred": n_pred}
 
-    # Precision: fraction of predicted events that hit at least one GT event
+    def overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
+        # half-open intervals [a0, a1) and [b0, b1) overlap iff a0 < b1 and b0 < a1
+        return a[0] < b[1] and b[0] < a[1]
+
+    # Precision: fraction of predicted events that hit ≥1 GT event
     tp_pred = sum(
-        1 for pe in pred_events if any(overlaps(pe, ge) for ge in gt_events)
+        1 for pe in pred_events
+        if any(overlaps(pe, ge) for ge in gt_events)
     )
-    precision = tp_pred / len(pred_events)
+    precision = tp_pred / n_pred
 
-    # Recall: fraction of GT events detected by at least one predicted event
+    # Recall: fraction of GT events hit by ≥1 predicted event
     tp_gt = sum(
-        1 for ge in gt_events if any(overlaps(ge, pe) for pe in pred_events)
+        1 for ge in gt_events
+        if any(overlaps(ge, pe) for pe in pred_events)
     )
-    recall = tp_gt / len(gt_events)
+    recall = tp_gt / n_gt
 
-    f_score = _fbeta_from_pr(precision, recall, beta)
-    return {"precision": precision, "recall": recall, "f_score": f_score}
+    return {
+        "precision": precision,
+        "recall":    recall,
+        "f_score":   _fbeta(precision, recall, beta),
+        "n_gt":      n_gt,
+        "n_pred":    n_pred,
+    }
 
 
-# ── Affiliation metric ────────────────────────────────────────────────────────
+# ── 2. Affiliation-based F0.5 (Huet et al. KDD 2022) ─────────────────────────
 
 def affiliation_fbeta(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     beta: float = 0.5,
 ) -> dict[str, float]:
-    """Affiliation-based precision / recall / F-beta.
+    """Affiliation-based Precision / Recall / F-beta.
 
-    Based on Huet et al. (KDD 2022).  Each predicted point is affiliated
-    to its nearest ground-truth anomaly event; the affiliation scores
-    measure both coverage and boundary precision.
+    Exact implementation via the `affiliation-metrics` library (Huet et al.).
+    The library must be installed:
+        pip install git+https://github.com/ahstat/affiliation-metrics-py.git
 
-    This is a *simplified* implementation that captures the spirit of the
-    metric.  For exact replication of PSTG numbers, install the official
-    `affiliation-metrics` package (pip install affiliation-metrics) and
-    replace this function with its API.
+    The metric measures temporal localisation quality:
+      • Precision: how close predicted points are to GT anomaly boundaries.
+      • Recall:    how well predicted points cover GT anomaly intervals.
+    Both use survival-function weighting over affiliation zones I_j.
 
     Args:
-        y_true: binary ground-truth labels (T,)
-        y_pred: binary predictions (T,)
-        beta:   F-beta parameter
+        y_true: binary ground-truth  (T,)
+        y_pred: binary predictions   (T,)
+        beta:   F-beta parameter (0.5 = precision-weighted)
 
     Returns:
-        dict with keys: precision, recall, f_score
+        {"precision": …, "recall": …, "f_score": …}
+
+    Raises:
+        ImportError: if affiliation-metrics is not installed.
     """
-    gt_events = _extract_events(y_true)
-    if not gt_events:
-        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
+    if not _AFFILIATION_AVAILABLE:
+        raise ImportError(
+            "The `affiliation-metrics` library is required for this metric.\n"
+            "Install with:\n"
+            "  pip install git+https://github.com/ahstat/affiliation-metrics-py.git"
+        )
 
     T = len(y_true)
 
-    # For each GT event, compute affiliation precision and recall
-    # as the average over time steps.
+    gt_events   = _extract_events(y_true)
+    pred_events = _extract_events(y_pred)
 
-    total_aff_prec = 0.0
-    total_aff_rec  = 0.0
+    # Edge cases
+    if len(gt_events) == 0:
+        if len(pred_events) == 0:
+            return {"precision": 1.0, "recall": 1.0, "f_score": 1.0}
+        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
 
-    for ge_start, ge_end in gt_events:
-        gt_len   = ge_end - ge_start + 1
-        pred_seg = y_pred[ge_start : ge_end + 1]
+    if len(pred_events) == 0:
+        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
 
-        # Affiliation recall: what fraction of the GT event is covered
-        aff_rec = float(pred_seg.sum()) / gt_len
+    Trange = (0, T)
+    pr = _pr(pred_events, gt_events, Trange)
 
-        # Affiliation precision: for each TP in [ge_start, ge_end],
-        # how close is it to the GT event boundary?
-        # Simplified: fraction of predicted anomalies in the GT window
-        # that actually fall inside (always 1.0 here since we're in the window).
-        # We extend by looking at predictions outside the window that are "close".
-        # Full implementation would weight by normalised distance to GT event.
-        pred_in_window    = int(pred_seg.sum())
-        pred_total_nearby = int(y_pred.sum())   # simplified: no distance weighting
-        if pred_total_nearby == 0:
-            aff_prec = 0.0
-        else:
-            aff_prec = pred_in_window / max(pred_total_nearby, 1)
+    precision = float(pr["precision"])
+    recall    = float(pr["recall"])
 
-        total_aff_prec += aff_prec
-        total_aff_rec  += aff_rec
-
-    n = len(gt_events)
-    prec   = total_aff_prec / n
-    recall = total_aff_rec  / n
-    f_score = _fbeta_from_pr(prec, recall, beta)
-    return {"precision": prec, "recall": recall, "f_score": f_score}
+    return {
+        "precision": precision,
+        "recall":    recall,
+        "f_score":   _fbeta(precision, recall, beta),
+    }
 
 
-# ── Point-wise metrics ────────────────────────────────────────────────────────
+# ── 3. Point-wise metrics ─────────────────────────────────────────────────────
 
 def point_wise_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     scores: np.ndarray | None = None,
 ) -> dict[str, float]:
-    """Standard point-level metrics.
+    """Standard point-level metrics (no point adjustment).
 
-    Args:
-        y_true:  binary (T,)
-        y_pred:  binary (T,)
-        scores:  continuous anomaly scores (T,) — used for AUC; optional
+    Useful for comparison with papers that report F1 / AUC.
 
     Returns:
-        dict with keys: precision, recall, f1, f05, auc (if scores given)
+        {"precision": …, "recall": …, "f1": …, "f05": …, "auc": … (if scores)}
     """
     prec, rec, f1, _ = precision_recall_fscore_support(
         y_true, y_pred, average="binary", zero_division=0
@@ -190,44 +221,60 @@ def point_wise_metrics(
         "precision": float(prec),
         "recall":    float(rec),
         "f1":        float(f1),
-        "f05":       _fbeta_from_pr(float(prec), float(rec), beta=0.5),
+        "f05":       _fbeta(float(prec), float(rec), beta=0.5),
     }
 
     if scores is not None and len(np.unique(y_true)) > 1:
-        result["auc"] = float(roc_auc_score(y_true, scores))
+        try:
+            result["auc"] = float(roc_auc_score(y_true, scores))
+        except ValueError:
+            result["auc"] = float("nan")
 
     return result
 
 
-# ── Combined evaluator ────────────────────────────────────────────────────────
+# ── 4. Combined evaluator ─────────────────────────────────────────────────────
 
 def evaluate(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    scores: np.ndarray | None = None,
-    beta: float = 0.5,
+    y_true:  np.ndarray,
+    y_pred:  np.ndarray,
+    scores:  np.ndarray | None = None,
+    beta:    float = 0.5,
+    strict:  bool  = True,
 ) -> dict[str, dict[str, float]]:
-    """Run all evaluation metrics and return a nested dict.
+    """Run all metrics and return a nested result dict.
 
-    Returns
-    -------
-    {
-        "point":       {precision, recall, f1, f05, auc},
-        "event":       {precision, recall, f_score},
-        "affiliation": {precision, recall, f_score},
-    }
+    Args:
+        y_true:  binary ground-truth (T,)
+        y_pred:  binary predictions  (T,)
+        scores:  continuous anomaly scores (T,) for AUC — optional
+        beta:    F-beta parameter (default 0.5 = precision-weighted, matches PSTG)
+        strict:  if True, raise ImportError when affiliation-metrics is missing;
+                 if False, return NaN values instead
+
+    Returns::
+
+        {
+            "point":       {precision, recall, f1, f05, auc},
+            "event":       {precision, recall, f_score, n_gt, n_pred},
+            "affiliation": {precision, recall, f_score},
+        }
     """
-    return {
-        "point":       point_wise_metrics(y_true, y_pred, scores),
-        "event":       event_wise_fbeta(y_true, y_pred, beta),
-        "affiliation": affiliation_fbeta(y_true, y_pred, beta),
+    y_true = np.asarray(y_true, dtype=np.int32)
+    y_pred = np.asarray(y_pred, dtype=np.int32)
+
+    result = {
+        "point": point_wise_metrics(y_true, y_pred, scores),
+        "event": event_wise_fbeta(y_true, y_pred, beta),
     }
 
+    try:
+        result["affiliation"] = affiliation_fbeta(y_true, y_pred, beta)
+    except ImportError:
+        if strict:
+            raise
+        result["affiliation"] = {"precision": float("nan"),
+                                 "recall":    float("nan"),
+                                 "f_score":   float("nan")}
 
-# ── Private helpers ────────────────────────────────────────────────────────────
-
-def _fbeta_from_pr(precision: float, recall: float, beta: float = 0.5) -> float:
-    if precision + recall == 0:
-        return 0.0
-    beta2 = beta ** 2
-    return (1 + beta2) * precision * recall / (beta2 * precision + recall)
+    return result
