@@ -1,30 +1,29 @@
 """
-Evaluation Metrics — fully aligned with PSTG (Chen et al., Entropy 2026).
+Evaluation Metrics — aligned with ESA-ADB (Kotowski et al. 2024) and PSTG (Chen et al. 2026).
 
-Two primary metrics (no point adjustment):
+Primary metrics reported (no point adjustment, matches PSTG Table 5):
 
-1. Event-wise F0.5
-   Definition follows the ESA-AD benchmark (Kotowski et al., 2024).
-   A predicted event is a TP if it overlaps any GT anomaly event.
-   A GT event is recalled if any predicted event overlaps it.
-   Multiple predictions covering the same GT event count as 1 recall TP.
+1. Event-wise F0.5  — uses the TNR-corrected precision from ESA-ADB / Sehili et al. (2023).
+                      Formula: precision_ew = (TP/(TP+FP)) × TNR
+                      where TNR = 1 − FP_steps / nominal_steps
 
-2. Affiliation-based F0.5
-   Exact implementation of Huet et al. (KDD 2022) via the official library.
-   Measures boundary proximity and coverage completeness.
-   Uses the `affiliation-metrics` library when available; raises if not installed.
+2. Affiliation F0.5 — exact Huet et al. (KDD 2022) via official library.
+                      ESA-ADB uses nanosecond timestamps; we use integer indices.
+                      For uniformly sampled data (no gaps) the ratios are identical.
+
+Secondary metrics (for cross-paper comparison):
+
+3. Point-wise F1 / AUC — standard, comparable with GDN / ContrastAD / FuSAGNet.
 
 Installation:
     pip install git+https://github.com/ahstat/affiliation-metrics-py.git
 
 References
 ----------
-Huet et al. (2022) "Local Evaluation of Time Series Anomaly Detection
-  Algorithms", KDD 2022.  https://github.com/ahstat/affiliation-metrics-py
-Kotowski et al. (2024) "European Space Agency Benchmark for Anomaly
-  Detection in Satellite Telemetry", arXiv 2406.xxxxx.
-Chen et al. (2026) "Progressive Spatiotemporal Graph Modelling for
-  Spacecraft Anomaly Detection", Entropy 28, 426.
+Huet et al. (2022) KDD.          https://github.com/ahstat/affiliation-metrics-py
+Sehili et al. (2023)              precision TNR correction
+Kotowski et al. (2024) ESA-ADB.  https://github.com/kplabs-pl/ESA-ADB
+Chen et al. (2026) PSTG.         Entropy 28, 426.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, precision_recall_fscore_support
 
 
-# ── Affiliation library (required for primary metric) ─────────────────────────
+# ── Affiliation library ───────────────────────────────────────────────────────
 
 try:
     from affiliation.generics import convert_vector_to_events as _cvt
@@ -46,10 +45,10 @@ except ImportError:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _extract_events(binary: np.ndarray) -> list[tuple[int, int]]:
-    """Return contiguous 1-runs as (start, end_exclusive) tuples.
+    """Return contiguous 1-runs as half-open (start, end) tuples.
 
-    Matches the convention used by the affiliation-metrics library:
-        events_pred = [(4, 5), (8, 9)]  ← half-open intervals
+    Matches affiliation-metrics library convention:
+        [0,0,1,1,0,1,0] → [(2,4), (5,6)]
     """
     events: list[tuple[int, int]] = []
     in_event = False
@@ -59,11 +58,16 @@ def _extract_events(binary: np.ndarray) -> list[tuple[int, int]]:
             start    = i
             in_event = True
         elif not v and in_event:
-            events.append((start, i))   # [start, i)  ← i is exclusive
+            events.append((start, i))
             in_event = False
     if in_event:
         events.append((start, len(binary)))
     return events
+
+
+def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """True if half-open intervals [a0,a1) and [b0,b1) share ≥1 timestep."""
+    return a[0] < b[1] and b[0] < a[1]
 
 
 def _fbeta(precision: float, recall: float, beta: float = 0.5) -> float:
@@ -73,58 +77,84 @@ def _fbeta(precision: float, recall: float, beta: float = 0.5) -> float:
     return (1 + b2) * precision * recall / (b2 * precision + recall)
 
 
-# ── 1. Event-wise F0.5 ────────────────────────────────────────────────────────
+# ── 1. Event-wise F0.5 (ESA-ADB / Sehili et al. 2023) ───────────────────────
 
 def event_wise_fbeta(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    beta: float = 0.5,
+    beta:   float = 0.5,
 ) -> dict[str, float]:
-    """Event-level Precision / Recall / F-beta.
+    """Event-wise Precision / Recall / F-beta matching ESA-ADB ESAScores.
 
-    Matching rule (ESA-AD / Kotowski 2024):
-      - A predicted event is a True Positive  if it overlaps ≥1 GT event.
-      - A GT event     is a True Positive  if it is overlapped by ≥1 prediction.
-      - Multiple predictions covering the same GT event  → 1 recall TP.
-      - Multiple GT events covered by the same prediction → 1 precision TP
-        (the prediction is still one event).
+    Precision uses the Sehili et al. (2023) TNR correction adopted by ESA-ADB:
+
+        FP_events      = predicted events overlapping NO GT anomaly event
+        FP_steps       = Σ duration(FP_events)
+        nominal_steps  = total_T − Σ duration(GT_events)
+        TNR            = clamp(1 − FP_steps / nominal_steps, 0, 1)
+        precision_ew   = (TP / (TP + |FP_events|)) × TNR
+
+    Recall (standard event-level):
+        TP_gt     = GT events overlapped by ≥1 predicted event
+        recall    = TP_gt / N_gt
+
+    This makes precision stricter than plain TP/(TP+FP): false-positive events
+    that cover large stretches of nominal time are penalised more heavily.
 
     Args:
-        y_true: binary ground-truth  (T,)
-        y_pred: binary predictions   (T,)
-        beta:   F-beta parameter (0.5 = precision-weighted)
+        y_true: binary ground-truth (T,) — only actual anomaly events, not
+                rare nominal events; filter those out before calling.
+        y_pred: binary predictions  (T,)
+        beta:   F-beta parameter (0.5 = precision-weighted, matches PSTG)
 
     Returns:
-        {"precision": …, "recall": …, "f_score": …, "n_gt": …, "n_pred": …}
+        dict: precision, recall, f_score, n_gt, n_pred, tnr, fp_steps
     """
+    T = len(y_true)
     gt_events   = _extract_events(y_true)
     pred_events = _extract_events(y_pred)
 
     n_gt   = len(gt_events)
     n_pred = len(pred_events)
 
+    # ── Edge cases ────────────────────────────────────────────────────────
     if n_gt == 0 and n_pred == 0:
         return {"precision": 1.0, "recall": 1.0, "f_score": 1.0,
-                "n_gt": 0, "n_pred": 0}
-    if n_gt == 0 or n_pred == 0:
+                "n_gt": 0, "n_pred": 0, "tnr": 1.0, "fp_steps": 0}
+    if n_gt == 0:
+        # No GT anomalies; all predictions are FPs → precision = 0
         return {"precision": 0.0, "recall": 0.0, "f_score": 0.0,
-                "n_gt": n_gt, "n_pred": n_pred}
+                "n_gt": 0, "n_pred": n_pred, "tnr": 0.0,
+                "fp_steps": sum(e - s for s, e in pred_events)}
+    if n_pred == 0:
+        return {"precision": 0.0, "recall": 0.0, "f_score": 0.0,
+                "n_gt": n_gt, "n_pred": 0, "tnr": 1.0, "fp_steps": 0}
 
-    def overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
-        # half-open intervals [a0, a1) and [b0, b1) overlap iff a0 < b1 and b0 < a1
-        return a[0] < b[1] and b[0] < a[1]
+    # ── TP / FP classification ────────────────────────────────────────────
+    # TP (for precision): predicted events overlapping ≥1 GT event
+    tp_pred = [pe for pe in pred_events if any(_overlaps(pe, ge) for ge in gt_events)]
+    fp_pred = [pe for pe in pred_events if not any(_overlaps(pe, ge) for ge in gt_events)]
 
-    # Precision: fraction of predicted events that hit ≥1 GT event
-    tp_pred = sum(
-        1 for pe in pred_events
-        if any(overlaps(pe, ge) for ge in gt_events)
-    )
-    precision = tp_pred / n_pred
+    n_tp_pred  = len(tp_pred)
+    n_fp_pred  = len(fp_pred)
+    fp_steps   = sum(e - s for s, e in fp_pred)
 
-    # Recall: fraction of GT events hit by ≥1 predicted event
+    # TNR over nominal (non-anomaly) time
+    gt_steps      = sum(e - s for s, e in gt_events)
+    nominal_steps = max(1, T - gt_steps)          # avoid /0 if entire series is anomaly
+    tnr           = max(0.0, 1.0 - fp_steps / nominal_steps)
+
+    # TNR-corrected event-wise precision
+    if n_tp_pred + n_fp_pred == 0:
+        precision = 0.0
+    else:
+        precision = (n_tp_pred / (n_tp_pred + n_fp_pred)) * tnr
+
+    # ── Recall ────────────────────────────────────────────────────────────
+    # TP (for recall): GT events overlapped by ≥1 predicted event
     tp_gt = sum(
         1 for ge in gt_events
-        if any(overlaps(ge, pe) for pe in pred_events)
+        if any(_overlaps(ge, pe) for pe in pred_events)
     )
     recall = tp_gt / n_gt
 
@@ -134,6 +164,8 @@ def event_wise_fbeta(
         "f_score":   _fbeta(precision, recall, beta),
         "n_gt":      n_gt,
         "n_pred":    n_pred,
+        "tnr":       tnr,
+        "fp_steps":  fp_steps,
     }
 
 
@@ -142,54 +174,39 @@ def event_wise_fbeta(
 def affiliation_fbeta(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    beta: float = 0.5,
+    beta:   float = 0.5,
 ) -> dict[str, float]:
-    """Affiliation-based Precision / Recall / F-beta.
+    """Affiliation-based Precision / Recall / F-beta via official library.
 
-    Exact implementation via the `affiliation-metrics` library (Huet et al.).
-    The library must be installed:
-        pip install git+https://github.com/ahstat/affiliation-metrics-py.git
+    Uses pr_from_events() from https://github.com/ahstat/affiliation-metrics-py
+    which is the same function used in the ESA-ADB benchmark.
 
-    The metric measures temporal localisation quality:
-      • Precision: how close predicted points are to GT anomaly boundaries.
-      • Recall:    how well predicted points cover GT anomaly intervals.
-    Both use survival-function weighting over affiliation zones I_j.
+    Timestamp convention: we pass integer indices [0, T).
+    ESA-ADB uses nanosecond timestamps internally, but for uniformly sampled
+    data with no gaps the survival-function ratios are identical (only the
+    units change, not the relative distances).
 
-    Args:
-        y_true: binary ground-truth  (T,)
-        y_pred: binary predictions   (T,)
-        beta:   F-beta parameter (0.5 = precision-weighted)
+    For data with irregular gaps, convert to actual timestamps before calling.
 
-    Returns:
-        {"precision": …, "recall": …, "f_score": …}
-
-    Raises:
-        ImportError: if affiliation-metrics is not installed.
+    Raises ImportError if affiliation-metrics is not installed.
     """
     if not _AFFILIATION_AVAILABLE:
         raise ImportError(
-            "The `affiliation-metrics` library is required for this metric.\n"
-            "Install with:\n"
-            "  pip install git+https://github.com/ahstat/affiliation-metrics-py.git"
+            "Install: pip install git+https://github.com/ahstat/affiliation-metrics-py.git"
         )
 
     T = len(y_true)
-
     gt_events   = _extract_events(y_true)
     pred_events = _extract_events(y_pred)
 
-    # Edge cases
-    if len(gt_events) == 0:
-        if len(pred_events) == 0:
+    if not gt_events:
+        if not pred_events:
             return {"precision": 1.0, "recall": 1.0, "f_score": 1.0}
         return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
-
-    if len(pred_events) == 0:
+    if not pred_events:
         return {"precision": 0.0, "recall": 0.0, "f_score": 0.0}
 
-    Trange = (0, T)
-    pr = _pr(pred_events, gt_events, Trange)
-
+    pr = _pr(pred_events, gt_events, Trange=(0, T))
     precision = float(pr["precision"])
     recall    = float(pr["recall"])
 
@@ -203,16 +220,13 @@ def affiliation_fbeta(
 # ── 3. Point-wise metrics ─────────────────────────────────────────────────────
 
 def point_wise_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    scores: np.ndarray | None = None,
+    y_true:  np.ndarray,
+    y_pred:  np.ndarray,
+    scores:  np.ndarray | None = None,
 ) -> dict[str, float]:
     """Standard point-level metrics (no point adjustment).
 
-    Useful for comparison with papers that report F1 / AUC.
-
-    Returns:
-        {"precision": …, "recall": …, "f1": …, "f05": …, "auc": … (if scores)}
+    Comparable with GDN, ContrastAD, FuSAGNet, MSHTrans.
     """
     prec, rec, f1, _ = precision_recall_fscore_support(
         y_true, y_pred, average="binary", zero_division=0
@@ -223,13 +237,11 @@ def point_wise_metrics(
         "f1":        float(f1),
         "f05":       _fbeta(float(prec), float(rec), beta=0.5),
     }
-
     if scores is not None and len(np.unique(y_true)) > 1:
         try:
             result["auc"] = float(roc_auc_score(y_true, scores))
         except ValueError:
             result["auc"] = float("nan")
-
     return result
 
 
@@ -245,18 +257,18 @@ def evaluate(
     """Run all metrics and return a nested result dict.
 
     Args:
-        y_true:  binary ground-truth (T,)
+        y_true:  binary ground-truth (T,) — anomalies only, rare nominal events
+                 must be excluded BEFORE calling (set to 0 in y_true).
         y_pred:  binary predictions  (T,)
-        scores:  continuous anomaly scores (T,) for AUC — optional
-        beta:    F-beta parameter (default 0.5 = precision-weighted, matches PSTG)
-        strict:  if True, raise ImportError when affiliation-metrics is missing;
-                 if False, return NaN values instead
+        scores:  continuous anomaly scores for AUC — optional
+        beta:    F-beta parameter (0.5 matches PSTG)
+        strict:  raise ImportError when affiliation-metrics missing (default True)
 
     Returns::
 
         {
             "point":       {precision, recall, f1, f05, auc},
-            "event":       {precision, recall, f_score, n_gt, n_pred},
+            "event":       {precision, recall, f_score, n_gt, n_pred, tnr, fp_steps},
             "affiliation": {precision, recall, f_score},
         }
     """
@@ -273,8 +285,10 @@ def evaluate(
     except ImportError:
         if strict:
             raise
-        result["affiliation"] = {"precision": float("nan"),
-                                 "recall":    float("nan"),
-                                 "f_score":   float("nan")}
+        result["affiliation"] = {
+            "precision": float("nan"),
+            "recall":    float("nan"),
+            "f_score":   float("nan"),
+        }
 
     return result
