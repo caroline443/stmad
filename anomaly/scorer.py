@@ -1,18 +1,10 @@
 """
-Anomaly Scorer.
+Anomaly Scorer — 支持重建（F=0）和预测（F>0）两种模式。
 
-Runs the trained STMAD model over a DataLoader and aggregates per-timestep
-reconstruction errors into a single anomaly score time series.
-
-Because consecutive windows overlap (stride=1 by default), multiple
-windows contribute a score to each time step.  We aggregate by *mean*
-over all windows that cover a given time step.
-
-Output
-------
-scores : np.ndarray of shape (T_total,)  — higher = more anomalous
-labels : np.ndarray of shape (T_total,)  — ground-truth binary labels
-                                            (None if DataLoader has no labels)
+重建模式：score(t) = ||x(t) - x̂(t)||²，按滑窗平均聚合
+预测模式：score(t) = ||x_fut(t) - x̂_fut(t)||²
+          每个窗口预测未来 F 步，score 位于未来窗口区间 [s+T, s+T+F)
+          对应 PSTG 的预测误差评分
 """
 
 from __future__ import annotations
@@ -35,80 +27,117 @@ def compute_anomaly_scores(
     window_size: int,
     stride: int = 1,
     total_T: int | None = None,
+    forecast_horizon: int = 0,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    """Compute per-timestep anomaly scores via sliding-window reconstruction.
+    """计算每个时间步的异常分数。
 
-    Args:
-        model:       trained STMAD (in eval mode)
-        loader:      DataLoader whose dataset is SlidingWindowDataset
-        device:      torch device
-        window_size: T — length of each window
-        stride:      stride used when building the DataLoader
-        total_T:     total number of time steps; inferred from loader if None
+    重建模式 (forecast_horizon=0):
+        每个窗口 [s, s+T) 的重建误差聚合到 [s, s+T)
+
+    预测模式 (forecast_horizon=F):
+        每个窗口 [s, s+T) 的预测误差聚合到未来区间 [s+T, s+T+F)
+        → 分数时间轴对应实际观测时间
 
     Returns:
-        scores : (T_total,) float32  — mean squared reconstruction error per step
-        labels : (T_total,) float32 | None
+        scores: (total_T,) 异常分
+        labels: (total_T,) 或 None
     """
     model.eval()
 
-    # Derive total_T from the dataset to guarantee full coverage.
-    # Do NOT derive from len(loader) * batch_size: that undercounts if
-    # the DataLoader silently dropped the last batch (drop_last=True).
-    n_windows = len(loader.dataset)          # always the full window count
+    is_forecast = forecast_horizon > 0
+    n_windows   = len(loader.dataset)
+
     if total_T is None:
-        total_T = (n_windows - 1) * stride + window_size
+        if is_forecast:
+            # 每个窗口覆盖 [s+T, s+T+F)，最后一个窗口结束位置
+            last_start = (n_windows - 1) * stride
+            total_T    = last_start + window_size + forecast_horizon
+        else:
+            total_T = (n_windows - 1) * stride + window_size
 
     score_sum  = np.zeros(total_T, dtype=np.float64)
     count      = np.zeros(total_T, dtype=np.float64)
     label_buf  = np.zeros(total_T, dtype=np.float32)
     has_labels = False
-    window_idx = 0   # global window index (tracks position in the time series)
+    window_idx = 0
 
     for batch in tqdm(loader, desc="Scoring", leave=False):
-        if isinstance(batch, (list, tuple)):
-            x, y = batch
-            has_labels = True
+        # 解包
+        if is_forecast:
+            # batch: (x_ctx, x_fut) 或 (x_ctx, x_fut, label)
+            if len(batch) == 3:
+                x_ctx, x_fut, lbl = batch
+                has_labels = True
+            else:
+                x_ctx, x_fut = batch
+                lbl = None
+            x_ctx = x_ctx.to(device)
+            x_fut = x_fut.to(device)
+            pred  = model(x_ctx)                          # (B, F, N)
+            err   = (x_fut - pred).pow(2).mean(dim=-1)   # (B, F)
         else:
-            x = batch
-            y = None
+            # batch: x 或 (x, label)
+            if isinstance(batch, (list, tuple)):
+                if batch[1].ndim > 1:                     # (x, label_2d) 不存在，但防御
+                    x, lbl = batch
+                    has_labels = True
+                elif batch[1].shape[-1] == window_size:   # label 形状与 x 一致时
+                    x, lbl = batch
+                    has_labels = True
+                else:
+                    x   = batch[0]
+                    lbl = batch[1] if len(batch) > 1 else None
+                    if lbl is not None:
+                        has_labels = True
+            else:
+                x   = batch
+                lbl = None
+            x     = x.to(device)
+            x_hat = model(x)
+            err   = (x - x_hat).pow(2).mean(dim=-1)      # (B, T)
 
-        x = x.to(device)                            # (B, T, N)
-        B = x.size(0)
-
-        x_hat   = model(x)                          # (B, T, N)
-        err_cpu = (x - x_hat).pow(2).mean(dim=-1).cpu().numpy()  # (B, T)
+        err_cpu = err.cpu().numpy()
+        B = err_cpu.shape[0]
 
         for i in range(B):
-            start = window_idx * stride
-            end   = start + window_size
-            end   = min(end, total_T)               # clamp to buffer boundary
-            valid = end - start
+            s = window_idx * stride
 
-            score_sum[start:end] += err_cpu[i, :valid]
-            count[start:end]     += 1
+            if is_forecast:
+                # 分数归属：未来窗口 [s+T, s+T+F)
+                start = s + window_size
+                end   = start + forecast_horizon
+                valid = min(end, total_T) - start
+                if valid <= 0:
+                    window_idx += 1
+                    continue
+                score_sum[start:start+valid] += err_cpu[i, :valid]
+                count[start:start+valid]     += 1
+                if has_labels and lbl is not None:
+                    label_buf[start:start+valid] = np.maximum(
+                        label_buf[start:start+valid],
+                        lbl[i, :valid].cpu().numpy(),
+                    )
+            else:
+                # 分数归属：当前窗口 [s, s+T)
+                end   = min(s + window_size, total_T)
+                valid = end - s
+                score_sum[s:end] += err_cpu[i, :valid]
+                count[s:end]     += 1
+                if has_labels and lbl is not None:
+                    label_buf[s:end] = np.maximum(
+                        label_buf[s:end],
+                        lbl[i, :valid].cpu().numpy(),
+                    )
 
-            if has_labels and y is not None:
-                label_buf[start:end] = np.maximum(
-                    label_buf[start:end],
-                    y[i, :valid].cpu().numpy(),
-                )
             window_idx += 1
 
-    # Warn if any timestep was never covered (indicates drop_last or stride issue)
     uncovered = int((count == 0).sum())
     if uncovered > 0:
-        logger.warning(
-            f"{uncovered}/{total_T} timesteps have count=0 "
-            f"(likely due to drop_last=True in DataLoader). "
-            f"Set drop_last=False in build_dataloaders to avoid this."
-        )
+        logger.warning(f"{uncovered}/{total_T} 时间步 count=0（未被任何窗口覆盖）")
 
-    # Safe mean: use NaN for uncovered steps so they don't corrupt thresholding
     with np.errstate(invalid="ignore"):
         scores = np.where(count > 0, score_sum / count, np.nan).astype(np.float32)
 
-    # For threshold fitting: drop NaN entries (they should not exist with drop_last=False)
     valid_mask = ~np.isnan(scores)
     if not valid_mask.all():
         scores = np.where(valid_mask, scores, float(np.nanmedian(scores)))

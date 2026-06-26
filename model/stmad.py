@@ -20,7 +20,7 @@ import torch.nn as nn
 
 from .patch_embed import PatchEmbedding
 from .stmad_block import STMADBlock
-from .decoder     import ReconstructionDecoder
+from .decoder     import ReconstructionDecoder, ForecastDecoder
 
 
 class STMAD(nn.Module):
@@ -54,6 +54,7 @@ class STMAD(nn.Module):
         top_k: int = 5,
         dropout: float = 0.1,
         temporal_encoder_type: str = "mamba",   # "mamba" | "transformer"
+        forecast_horizon: int = 0,              # 0=重建, >0=预测未来F步
     ) -> None:
         super().__init__()
 
@@ -91,11 +92,19 @@ class STMAD(nn.Module):
             for _ in range(n_layers)
         ])
 
-        self.decoder = ReconstructionDecoder(
-            d_model=d_model,
-            p_main=p_main,
-            L=L,
-        )
+        self.forecast_horizon = forecast_horizon
+        if forecast_horizon > 0:
+            self.decoder = ForecastDecoder(
+                d_model=d_model,
+                forecast_horizon=forecast_horizon,
+                n_sensors=n_sensors,
+            )
+        else:
+            self.decoder = ReconstructionDecoder(
+                d_model=d_model,
+                p_main=p_main,
+                L=L,
+            )
 
     # ── forward ───────────────────────────────────────────────────────────────
 
@@ -152,5 +161,6 @@ def build_model(config: dict) -> STMAD:
         top_k                  = config.get("top_k",      5),
         dropout                = config.get("dropout",    0.1),
         temporal_encoder_type  = model_type,
+        forecast_horizon       = config.get("forecast_horizon", 0),
     )
     return model

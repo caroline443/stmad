@@ -190,17 +190,22 @@ def run_evaluation(
     model, train_loader, val_loader, test_loader,
     test_data, test_labels, config, device, run_dir: Path,
 ) -> dict:
-    window_size  = config["window_size"]
-    stride       = config.get("stride", 1)            # 推理/测试步长
-    train_stride = config.get("train_stride", stride)  # 训练集步长（可能更大）
-    beta         = config.get("beta", 0.5)
+    window_size      = config["window_size"]
+    stride           = config.get("stride", 1)
+    train_stride     = config.get("train_stride", stride)
+    forecast_horizon = config.get("forecast_horizon", 0)
+    beta             = config.get("beta", 0.5)
+
+    def _score(loader, s, total):
+        return compute_anomaly_scores(
+            model, loader, device,
+            window_size=window_size, stride=s,
+            total_T=total, forecast_horizon=forecast_horizon,
+        )
 
     logger.info("Computing train scores for threshold fitting ...")
-    train_scores, _ = compute_anomaly_scores(
-        model, train_loader, device,
-        window_size=window_size, stride=train_stride,  # ← 用 train_stride
-        total_T=len(train_loader.dataset.data),
-    )
+    train_total  = len(train_loader.dataset.data)
+    train_scores, _ = _score(train_loader, train_stride, train_total)
 
     thr = DynamicThreshold(
         p_fit=config.get("p_fit", 0.21),
@@ -210,26 +215,19 @@ def run_evaluation(
 
     if val_loader is not None:
         logger.info("Fitting optimal threshold on val set ...")
-        val_scores, val_labels = compute_anomaly_scores(
-            model, val_loader, device,
-            window_size=window_size, stride=stride,    # val 用测试步长
-            total_T=len(val_loader.dataset.data),
-        )
+        val_total = len(val_loader.dataset.data)
+        val_scores, val_labels = _score(val_loader, stride, val_total)
         if val_labels is not None and len(np.unique(val_labels)) > 1:
             thr.fit_optimal(val_scores, val_labels, beta=beta)
         else:
-            thr.fit(val_scores)   # 对齐 PSTG：用 val scores 的分位数，不用 train
+            thr.fit(val_scores)   # 对齐 PSTG：用 val scores 分位数
     else:
         thr.fit(train_scores)
 
     logger.info(f"Threshold = {thr.threshold:.6f}")
 
     logger.info("Scoring test set ...")
-    test_scores, _ = compute_anomaly_scores(
-        model, test_loader, device,
-        window_size=window_size, stride=stride,
-        total_T=len(test_data),
-    )
+    test_scores, _ = _score(test_loader, stride, len(test_data))
     y_pred = thr.predict(test_scores)
 
     n = min(len(test_labels), len(y_pred), len(test_scores))
@@ -366,15 +364,16 @@ def main():
     )
 
     train_loader, val_loader, test_loader = build_dataloaders(
-        train_data  =train_data,
-        test_data   =test_data,
-        test_labels =test_labels,
-        window_size =config["window_size"],
-        batch_size  =config["batch_size"],
-        num_workers =config.get("num_workers", 4),
-        val_data    =val_data,
-        train_stride=config.get("train_stride", 1),
-        test_stride =config.get("stride", 1),
+        train_data       =train_data,
+        test_data        =test_data,
+        test_labels      =test_labels,
+        window_size      =config["window_size"],
+        batch_size       =config["batch_size"],
+        num_workers      =config.get("num_workers", 4),
+        val_data         =val_data,
+        train_stride     =config.get("train_stride", 1),
+        test_stride      =config.get("stride", 1),
+        forecast_horizon =config.get("forecast_horizon", 0),
     )
 
     # ── Model ─────────────────────────────────────────────────────────────

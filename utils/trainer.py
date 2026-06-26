@@ -100,9 +100,9 @@ class Trainer:
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:3d} [train]", leave=False)
         for batch in pbar:
-            x     = self._unpack(batch).to(self.device)
+            x, target = self._unpack_forecast(batch, self.device)
             x_hat = self.model(x)
-            loss  = F.mse_loss(x_hat, x)
+            loss  = F.mse_loss(x_hat, target)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -127,9 +127,9 @@ class Trainer:
         total_loss = 0.0
         n_batches  = 0
         for batch in self.val_loader:
-            x     = self._unpack(batch).to(self.device)
-            x_hat = self.model(x)
-            total_loss += F.mse_loss(x_hat, x).item()
+            x, target = self._unpack_forecast(batch, self.device)
+            x_hat     = self.model(x)
+            total_loss += F.mse_loss(x_hat, target).item()
             n_batches  += 1
         return total_loss / max(n_batches, 1)
 
@@ -196,7 +196,28 @@ class Trainer:
 
     @staticmethod
     def _unpack(batch) -> torch.Tensor:
+        """重建模式：返回 x。"""
         return batch[0] if isinstance(batch, (list, tuple)) else batch
+
+    @staticmethod
+    def _unpack_forecast(batch, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """统一处理重建和预测两种模式。
+
+        重建模式 batch: x 或 (x, label)           → target = x
+        预测模式 batch: (x_ctx, x_fut) 或 (x_ctx, x_fut, label) → target = x_fut
+        """
+        if isinstance(batch, (list, tuple)):
+            if len(batch) >= 2:
+                x      = batch[0].to(device)
+                target = batch[1].to(device)
+                # 预测模式：batch[1] 是 x_fut (F, N)
+                # 重建模式：batch[1] 是 label (T,) - 1D，不能当 target
+                if target.ndim == 1 or target.shape[-1] == 1:
+                    # 这是 label，不是 target；重建模式
+                    target = x
+                return x, target
+        x = batch.to(device)
+        return x, x   # 重建模式：target = input
 
     def _lr(self) -> float:
         return self.optimizer.param_groups[0]["lr"]

@@ -24,6 +24,7 @@ train_ratio: 0.5
 
 # ── 关键差异 ──────────────────────────────────────────────────────────────────
 model_type: transformer    # ← transformer（PSTG baseline）vs mamba（STMAD）
+forecast_horizon: 10      # 预测未来 10 步，对齐 PSTG (F=10)
 
 # 其余超参与 PSTG Table 2/3 完全对齐
 d_model: 512
