@@ -7,7 +7,7 @@
 # Reference: PSTG paper (entropy-28-00426, Chen et al. 2026)
 
 dataset: esa
-data_path: /path/to/ESA-Mission1   # override with actual server path
+data_path: /root/autodl-tmp/data/ESA-Mission1
 n_sensors: 6
 window_size: 250           # matches PSTG context window L=250
 top_k: 3                   # GAT top-k neighbors (all-but-self for 6 sensors)

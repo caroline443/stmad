@@ -3,7 +3,7 @@
 #              SMAP_test_label.npy (T_test,)
 
 dataset: smap
-data_path: /path/to/SMAP   # override with actual server path
+data_path: /root/autodl-tmp/data/AT/SMAP
 n_sensors: 25
 window_size: 100
 # patch_sizes must all divide window_size AND each p must be a multiple of p_main:

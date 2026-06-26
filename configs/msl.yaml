@@ -3,7 +3,7 @@
 #              MSL_test_label.npy (T_test,)
 
 dataset: msl
-data_path: /path/to/MSL    # override with actual server path
+data_path: /root/autodl-tmp/data/AT/MSL
 n_sensors: 55
 window_size: 100
 # Same patch divisibility as smap: 100/10=10, 100/20=5, 100/50=2 ✓
