@@ -290,14 +290,18 @@ def main():
     print(f"  平滑残差范围：[{raw_smoothed.min():.4f}, {raw_smoothed.max():.4f}]")
     print(f"  异常分数范围：[{anomaly_scores.min():.4f}, {anomaly_scores.max():.4f}]")
 
-    # ── 评估 ──────────────────────────────────────────────────────────────
+    # ── 评估（直接用动态阈值二值输出，与论文评估协议一致）──────────────
     print("\n=== 评估 ===")
-    best_thresh, best_result = find_best_threshold(
-        y_true, raw_smoothed, metric="event_f05"
-    )
+    from utils.metrics import event_wise_metrics, affiliation_metrics
 
-    ew = best_result["event_wise"]
-    af = best_result["affiliation"]
+    # detect_anomalies 已做阈值决策：>0 即为检测到的异常
+    y_pred = (anomaly_scores > 0).astype(np.int32)
+    pred_rate = float(y_pred.mean())
+    print(f"  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
+
+    ew = event_wise_metrics(y_true, y_pred)
+    af = affiliation_metrics(y_true, y_pred)
+    best_thresh = float(raw_smoothed[y_pred == 1].min()) if y_pred.any() else 0.0
 
     print("\n─── Event-wise 指标 ───")
     print(f"  Precision : {ew['precision']:.4f}")
@@ -318,7 +322,7 @@ def main():
                         "recall":    float(af["recall"]),
                         "f0.5":      float(af["f0.5"])},
         "threshold":         float(best_thresh),
-        "pred_anomaly_rate": float(best_result.get("pred_anomaly_rate", 0)),
+        "pred_anomaly_rate": float(pred_rate),
         "target_event_f05":  0.917,
         "target_affil_f05":  0.892,
     }
