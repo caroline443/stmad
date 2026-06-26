@@ -180,14 +180,15 @@ def run_evaluation(
     model, train_loader, val_loader, test_loader,
     test_data, test_labels, config, device, run_dir: Path,
 ) -> dict:
-    window_size = config["window_size"]
-    stride      = config.get("stride", 1)
-    beta        = config.get("beta", 0.5)
+    window_size  = config["window_size"]
+    stride       = config.get("stride", 1)            # 推理/测试步长
+    train_stride = config.get("train_stride", stride)  # 训练集步长（可能更大）
+    beta         = config.get("beta", 0.5)
 
     logger.info("Computing train scores for threshold fitting ...")
     train_scores, _ = compute_anomaly_scores(
         model, train_loader, device,
-        window_size=window_size, stride=stride,
+        window_size=window_size, stride=train_stride,  # ← 用 train_stride
         total_T=len(train_loader.dataset.data),
     )
 
@@ -201,7 +202,7 @@ def run_evaluation(
         logger.info("Fitting optimal threshold on val set ...")
         val_scores, val_labels = compute_anomaly_scores(
             model, val_loader, device,
-            window_size=window_size, stride=stride,
+            window_size=window_size, stride=stride,    # val 用测试步长
             total_T=len(val_loader.dataset.data),
         )
         if val_labels is not None and len(np.unique(val_labels)) > 1:
