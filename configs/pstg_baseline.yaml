@@ -14,7 +14,7 @@ patch_sizes: [25, 50, 125]
 top_k: 4
 batch_size: 70
 train_stride: 125
-stride: 25
+stride: 10       # 预测模式 stride≤F=10，保证完整覆盖
 p_fit: 0.21
 
 esa_subsystem: 5

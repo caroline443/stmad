@@ -17,7 +17,7 @@ patience: 0
 forecast_horizon: 10  # 预测未来 10 步，对齐 PSTG (F=10)
 train_stride: 125          # 训练时每隔 125 步取一个窗口（与 p_main 相同量级）
                            # 15M × 0.5 / 125 ≈ 6.1万个训练窗口，每 epoch 约几分钟
-stride: 25                 # 测试评分时步长，够细粒度又不至于 OOM
+stride: 10                 # 预测模式 stride≤F=10，保证每个时间步都有分数
 p_fit: 0.21               # PSTG threshold fitting percentage
 
 # ESA-specific: channel selection
