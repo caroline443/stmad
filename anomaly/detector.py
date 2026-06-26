@@ -194,20 +194,16 @@ def detect_anomalies(
     # 2. 阈值（改进版）
     eps = _find_optimal_threshold(r_smooth, p_tfi, n_candidates)
 
-    # 3a. 原始残差的异常分数
+    # 3. 原始残差的异常分数
+    # 注：不使用反射残差（r_ref = 2μ - r）
+    # ESA-AD 的正常数据本身就在 [0.006, 0.016] 之间自然波动
+    # 反射后低残差正常点会被误判为"静默异常"→ 大量假阳性序列
     scores_raw = _compute_anomaly_scores(r_smooth, eps, mu_r, sigma_r, min_peak_z)
 
-    # 3b. 反射残差（捕获 silent failure：信号骤降型异常）
-    r_ref    = np.clip(2.0 * mu_r - r_smooth, 0, None)
-    mu_ref   = float(np.mean(r_ref))
-    sigma_ref = float(np.std(r_ref))
-    eps_ref  = _find_optimal_threshold(r_ref, p_tfi, n_candidates)
-    scores_ref = _compute_anomaly_scores(r_ref, eps_ref, mu_ref, sigma_ref, min_peak_z)
+    anomaly_scores = scores_raw.astype(np.float32)
 
-    # 4. 合并
-    anomaly_scores = np.maximum(scores_raw, scores_ref).astype(np.float32)
-
-    print(f"  阈值 ε* = {eps:.5f}  pred_rate = {(r_smooth >= eps).mean()*100:.3f}%")
-    print(f"  检测到序列数 = {_count_sequences(scores_raw > 0)}")
+    n_seq = _count_sequences(anomaly_scores > 0)
+    print(f"  阈值 ε* = {eps:.5f}  初始pred_rate = {(r_smooth >= eps).mean()*100:.3f}%")
+    print(f"  剪枝后序列数 = {n_seq}  最终pred_rate = {(anomaly_scores>0).mean()*100:.3f}%")
 
     return anomaly_scores
