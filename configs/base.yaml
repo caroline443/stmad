@@ -1,0 +1,32 @@
+# ── Model ─────────────────────────────────────────────────────────────────────
+d_model: 64          # embedding dimension
+d_state: 16          # Mamba SSM state dimension
+d_conv: 4            # Mamba conv width
+expand: 2            # Mamba expansion factor
+n_heads: 4           # GAT attention heads
+n_layers: 2          # number of STMAD blocks
+patch_sizes: [25, 50, 125]   # multi-scale patch sizes (finest first)
+dropout: 0.1
+
+# ── Training ──────────────────────────────────────────────────────────────────
+epochs: 70
+learning_rate: 5.0e-4
+weight_decay: 4.0e-4
+batch_size: 64
+num_workers: 4
+grad_clip: 1.0       # gradient clipping norm
+val_ratio: 0.1       # fraction of train data used as validation (if no separate val)
+
+# ── Anomaly Scoring ────────────────────────────────────────────────────────────
+stride: 1            # sliding window stride during inference
+p_fit: 0.21          # percentile for dynamic threshold fitting
+p_s: 0.05            # smoothing percentage
+n_s: 30              # smoothing window size
+beta: 0.5            # F-beta score beta (0.5 → F0.5, precision-weighted)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+log_dir: logs/
+checkpoint_dir: checkpoints/
+save_best: true
+use_wandb: false
+wandb_project: stmad

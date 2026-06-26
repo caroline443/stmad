@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Environments
+.env
+.venv
+env/
+
+# Data (do NOT commit raw data)
+data/raw/
+*.npy
+*.pkl
+*.h5
+*.csv
+
+# Checkpoints and logs (optionally track with DVC)
+checkpoints/
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# W&B
+wandb/

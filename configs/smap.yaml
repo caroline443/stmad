@@ -1,0 +1,12 @@
+# SMAP dataset configuration
+# Data format: SMAP_train.npy (T_train, 25), SMAP_test.npy (T_test, 25),
+#              SMAP_test_label.npy (T_test,)
+
+dataset: smap
+data_path: /path/to/SMAP   # override with actual server path
+n_sensors: 25
+window_size: 100            # sequence length per window
+top_k: 5                    # GAT top-k neighbors (K ≈ 0.2*N)
+
+batch_size: 64
+stride: 1                   # stride during test (=1 for fine-grained scores)

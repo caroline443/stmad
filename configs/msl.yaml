@@ -1,0 +1,12 @@
+# MSL dataset configuration
+# Data format: MSL_train.npy (T_train, 55), MSL_test.npy (T_test, 55),
+#              MSL_test_label.npy (T_test,)
+
+dataset: msl
+data_path: /path/to/MSL    # override with actual server path
+n_sensors: 55
+window_size: 100
+top_k: 8                   # GAT top-k neighbors (K ≈ 0.15*N)
+
+batch_size: 64
+stride: 1

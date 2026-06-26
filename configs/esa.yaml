@@ -1,0 +1,23 @@
+# ESA Mission-1 dataset configuration
+# Data format: ESA-Mission1/
+#   channels/channel_*.zip  (6 channels, subsystem 5, channels 41-46)
+#   telecommands/telecommand_*.zip
+#   channels.csv, labels.csv, anomaly_type.csv, telecommands.csv
+#
+# Reference: PSTG paper (entropy-28-00426, Chen et al. 2026)
+
+dataset: esa
+data_path: /path/to/ESA-Mission1   # override with actual server path
+n_sensors: 6
+window_size: 250           # matches PSTG context window L=250
+top_k: 3                   # GAT top-k neighbors (all-but-self for 6 sensors)
+
+batch_size: 70             # matches PSTG
+stride: 1                  # fine-grained inference
+p_fit: 0.21               # PSTG threshold fitting percentage
+
+# ESA-specific: channel selection
+# Subsystem 5, channel indices 41-46 (0-indexed IDs as in channels.csv)
+esa_subsystem: 5
+esa_channel_ids: null      # null = auto-detect from channels.csv; or set [41,42,43,44,45,46]
+esa_cache_path: null       # optional: path to cache preprocessed .npy files
