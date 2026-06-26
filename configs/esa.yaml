@@ -19,6 +19,13 @@ p_fit: 0.21               # PSTG threshold fitting percentage
 # ESA-specific: channel selection
 # Subsystem 5, channel indices 41-46 (0-indexed IDs as in channels.csv)
 esa_subsystem: 5
-esa_channel_ids: null      # null = auto-detect from channels.csv; or set [41,42,43,44,45,46]
-esa_cache_path: null       # optional: path to cache preprocessed .npy files
-train_ratio: 0.5           # fraction of total timeline used for training (rest = test)
+# 显式指定 6 个通道（subsystem_5），跳过 channels.csv 自动检测
+# 与 PSTG 论文一致：channel_41 ~ channel_46
+esa_channel_ids: [41, 42, 43, 44, 45, 46]
+esa_cache_path: null       # 首次跑完后填路径，之后直接读 .npy 跳过解压
+
+# 时间切分：总时间 2000-01 ~ 2013-12（168 个月）
+# train_ratio=0.5 → 前 84 个月（2000-01 ~ 2007-01）train+val
+#                   后 84 个月（2007-01 ~ 2013-12）test
+# 与 PSTG 的 test 集边界一致（81月训 + 3月验 + 84月测）
+train_ratio: 0.5
