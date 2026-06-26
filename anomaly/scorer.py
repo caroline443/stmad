@@ -17,11 +17,14 @@ labels : np.ndarray of shape (T_total,)  — ground-truth binary labels
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
 
 
 @torch.no_grad()
@@ -49,17 +52,18 @@ def compute_anomaly_scores(
     """
     model.eval()
 
-    # We need total_T to pre-allocate accumulation buffers
+    # Derive total_T from the dataset to guarantee full coverage.
+    # Do NOT derive from len(loader) * batch_size: that undercounts if
+    # the DataLoader silently dropped the last batch (drop_last=True).
+    n_windows = len(loader.dataset)          # always the full window count
     if total_T is None:
-        n_windows = len(loader.dataset)
-        total_T   = (n_windows - 1) * stride + window_size
+        total_T = (n_windows - 1) * stride + window_size
 
-    score_sum = np.zeros(total_T, dtype=np.float64)
-    count     = np.zeros(total_T, dtype=np.float64)
-    label_buf = np.zeros(total_T, dtype=np.float32)
+    score_sum  = np.zeros(total_T, dtype=np.float64)
+    count      = np.zeros(total_T, dtype=np.float64)
+    label_buf  = np.zeros(total_T, dtype=np.float32)
     has_labels = False
-
-    window_idx = 0   # linear index over windows
+    window_idx = 0   # global window index (tracks position in the time series)
 
     for batch in tqdm(loader, desc="Scoring", leave=False):
         if isinstance(batch, (list, tuple)):
@@ -69,35 +73,44 @@ def compute_anomaly_scores(
             x = batch
             y = None
 
-        x = x.to(device)                  # (B, T, N)
+        x = x.to(device)                            # (B, T, N)
         B = x.size(0)
 
-        x_hat   = model(x)                # (B, T, N)
-        err     = (x - x_hat).pow(2)     # (B, T, N)
-        err_cpu = err.mean(dim=-1).cpu().numpy()   # (B, T)  — mean over sensors
+        x_hat   = model(x)                          # (B, T, N)
+        err_cpu = (x - x_hat).pow(2).mean(dim=-1).cpu().numpy()  # (B, T)
 
         for i in range(B):
             start = window_idx * stride
             end   = start + window_size
-            if end > total_T:
-                # Edge case: last batch may extend past total_T
-                valid = total_T - start
-                score_sum[start:total_T] += err_cpu[i, :valid]
-                count[start:total_T]     += 1
-                if has_labels and y is not None:
-                    label_buf[start:total_T] = y[i, :valid].cpu().numpy()
-            else:
-                score_sum[start:end] += err_cpu[i]
-                count[start:end]     += 1
-                if has_labels and y is not None:
-                    # Labels for the same step should be consistent; take max
-                    label_buf[start:end] = np.maximum(
-                        label_buf[start:end], y[i].cpu().numpy()
-                    )
+            end   = min(end, total_T)               # clamp to buffer boundary
+            valid = end - start
+
+            score_sum[start:end] += err_cpu[i, :valid]
+            count[start:end]     += 1
+
+            if has_labels and y is not None:
+                label_buf[start:end] = np.maximum(
+                    label_buf[start:end],
+                    y[i, :valid].cpu().numpy(),
+                )
             window_idx += 1
 
-    # Avoid division by zero (should not happen for valid data)
-    count = np.where(count == 0, 1, count)
-    scores = (score_sum / count).astype(np.float32)
+    # Warn if any timestep was never covered (indicates drop_last or stride issue)
+    uncovered = int((count == 0).sum())
+    if uncovered > 0:
+        logger.warning(
+            f"{uncovered}/{total_T} timesteps have count=0 "
+            f"(likely due to drop_last=True in DataLoader). "
+            f"Set drop_last=False in build_dataloaders to avoid this."
+        )
+
+    # Safe mean: use NaN for uncovered steps so they don't corrupt thresholding
+    with np.errstate(invalid="ignore"):
+        scores = np.where(count > 0, score_sum / count, np.nan).astype(np.float32)
+
+    # For threshold fitting: drop NaN entries (they should not exist with drop_last=False)
+    valid_mask = ~np.isnan(scores)
+    if not valid_mask.all():
+        scores = np.where(valid_mask, scores, float(np.nanmedian(scores)))
 
     return scores, (label_buf if has_labels else None)

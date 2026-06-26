@@ -54,10 +54,10 @@ class ReconstructionDecoder(nn.Module):
         """
         B, L, N, d = H.shape
 
-        out = self.mlp(H)                          # (B, L, N, p_main)
-        # Rearrange patches back to a contiguous time series
+        out = self.mlp(H)                                        # (B, L, N, p_main)
+        # Rearrange patches back to a contiguous time series:
         # (B, L, N, p_main) → (B, L, p_main, N) → (B, L*p_main, N)
-        out = out.permute(0, 1, 3, 2)             # (B, L, p_main, N)
-        out = out.reshape(B, L * self.p_main, N)  # (B, T, N)
+        out = out.permute(0, 1, 3, 2).contiguous()             # (B, L, p_main, N)
+        out = out.reshape(B, L * self.p_main, N)               # (B, T, N)
 
         return out

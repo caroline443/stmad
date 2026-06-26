@@ -21,3 +21,4 @@ p_fit: 0.21               # PSTG threshold fitting percentage
 esa_subsystem: 5
 esa_channel_ids: null      # null = auto-detect from channels.csv; or set [41,42,43,44,45,46]
 esa_cache_path: null       # optional: path to cache preprocessed .npy files
+train_ratio: 0.5           # fraction of total timeline used for training (rest = test)

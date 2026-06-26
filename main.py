@@ -122,6 +122,7 @@ def load_data(config: dict):
             subsystem   = config.get("esa_subsystem", 5),
             channel_ids = config.get("esa_channel_ids", None),
             val_ratio   = config.get("val_ratio", 0.1),
+            train_ratio = config.get("train_ratio", 0.5),
             cache_path  = config.get("esa_cache_path", None),
         )
     raise ValueError(f"Unknown dataset: {config['dataset']}")
@@ -144,16 +145,28 @@ def run_training(model, train_loader, val_loader, config, device, run_dir: Path)
     epochs = config.get("epochs", 70)
     logger.info(f"Training for {epochs} epochs  →  {run_dir}")
 
+    has_val = val_loader is not None
+    if not has_val:
+        logger.warning("No validation loader — model selection uses train loss. "
+                       "Set val_ratio > 0 in config to enable a validation split.")
+
     for epoch in range(1, epochs + 1):
         train_loss = trainer.train_epoch(epoch)
-        val_loss   = trainer.validate()
-        trainer.log_epoch(epoch, train_loss, val_loss)
-        trainer.save_if_best(val_loss if val_loss > 0 else train_loss, epoch)
+        val_loss   = trainer.validate()  # returns 0.0 when val_loader is None
+
+        # Log NaN for val when there is no val set (avoids misleading 0.0 in CSV)
+        log_val = val_loss if has_val else float("nan")
+        trainer.log_epoch(epoch, train_loss, log_val)
+
+        # Model selection: prefer val_loss; fall back to train_loss if no val set
+        selection_loss = val_loss if has_val else train_loss
+        trainer.save_if_best(selection_loss, epoch)
 
         if epoch % 10 == 0 or epoch == epochs:
+            val_str = f"{val_loss:.6f}" if has_val else "  n/a  "
             logger.info(
                 f"Epoch {epoch:3d}/{epochs} | "
-                f"train={train_loss:.6f} | val={val_loss:.6f} | "
+                f"train={train_loss:.6f} | val={val_str} | "
                 f"best={trainer.best_val_loss:.6f}"
             )
 

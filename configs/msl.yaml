@@ -6,6 +6,8 @@ dataset: msl
 data_path: /path/to/MSL    # override with actual server path
 n_sensors: 55
 window_size: 100
+# Same patch divisibility as smap: 100/10=10, 100/20=5, 100/50=2 ✓
+patch_sizes: [10, 20, 50]
 top_k: 8                   # GAT top-k neighbors (K ≈ 0.15*N)
 
 batch_size: 64

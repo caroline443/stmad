@@ -85,7 +85,8 @@ def build_dataloaders(
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
-        drop_last=True,
+        drop_last=False,   # False: model uses LayerNorm, last partial batch is fine;
+                           # True would cause trailing timesteps to have count=0 in scorer
     )
 
     val_loader = None

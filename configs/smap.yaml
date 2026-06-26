@@ -5,8 +5,11 @@
 dataset: smap
 data_path: /path/to/SMAP   # override with actual server path
 n_sensors: 25
-window_size: 100            # sequence length per window
+window_size: 100
+# patch_sizes must all divide window_size AND each p must be a multiple of p_main:
+#   100/10=10 ✓  100/20=5 ✓  100/50=2 ✓   repeat factors: 1, 2, 5
+patch_sizes: [10, 20, 50]
 top_k: 5                    # GAT top-k neighbors (K ≈ 0.2*N)
 
 batch_size: 64
-stride: 1                   # stride during test (=1 for fine-grained scores)
+stride: 1

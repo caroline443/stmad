@@ -31,9 +31,9 @@ try:
     from mamba_ssm import Mamba
     _MAMBA_AVAILABLE = True
 except ImportError:
-    logger.warning(
-        "mamba-ssm not found; falling back to GRUEncoder for temporal modeling. "
-        "Install with: pip install mamba-ssm causal-conv1d"
+    logger.error(
+        "mamba-ssm not found — falling back to GRU (results will differ from paper). "
+        "Install on the GPU server with: pip install mamba-ssm causal-conv1d"
     )
     _MAMBA_AVAILABLE = False
 
