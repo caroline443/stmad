@@ -39,6 +39,7 @@ import yaml
 from data   import build_dataloaders, load_smap_msl, load_esa
 from model  import build_model, build_pstg, pstg_loss
 from anomaly import compute_anomaly_scores, DynamicThreshold
+from anomaly.threshold import oracle_best_f
 from utils  import evaluate, Trainer, get_logger
 
 logger = logging.getLogger(__name__)
@@ -257,11 +258,27 @@ def run_evaluation(
                 f"F{beta}={af['f_score']:.4f}    ← PSTG: 0.892")
     logger.info("=" * 65)
 
+    # ── Oracle 评估：扫描所有阈值，确认模型判别能力上限 ──────────────────
+    oracle_pt = oracle_best_f(test_scores[:n], test_labels[:n].astype(int),
+                              beta=beta, level="point")
+    oracle_ev = oracle_best_f(test_scores[:n], test_labels[:n].astype(int),
+                              beta=beta, level="event")
+    logger.info("Oracle（最优阈值下限，与阈值选择无关）:")
+    logger.info(f"  Point  F0.5={oracle_pt['f_score']:.4f}  "
+                f"P={oracle_pt['precision']:.4f}  R={oracle_pt['recall']:.4f}  "
+                f"thr={oracle_pt['threshold']:.6f}")
+    logger.info(f"  Event  F0.5={oracle_ev['f_score']:.4f}  "
+                f"P={oracle_ev['precision']:.4f}  R={oracle_ev['recall']:.4f}  "
+                f"thr={oracle_ev['threshold']:.6f}")
+    logger.info("  ← 若 Oracle Event F0.5 接近 0.917，说明模型 OK，只差阈值")
+    logger.info("  ← 若 Oracle Event F0.5 也很低，说明模型本身有问题")
+
     # ── Save ──────────────────────────────────────────────────────────────
     out = {
         "run_dir":   str(run_dir),
         "threshold": thr.threshold,
         "results":   results,
+        "oracle":    {"point": oracle_pt, "event": oracle_ev},
     }
     with open(run_dir / "metrics.json", "w") as f:
         json.dump(out, f, indent=2)
