@@ -262,18 +262,28 @@ def find_best_threshold(
     y_true: np.ndarray,
     anomaly_scores: np.ndarray,
     metric: str = "event_f05",
-    n_thresholds: int = 100,
+    n_thresholds: int = 200,
 ) -> Tuple[float, dict]:
     """
-    在 [min_score, max_score] 上搜索使指标最优的阈值。
-    用于验证集调参（实际 inference 时用动态阈值，见 anomaly/detector.py）。
+    在分数分布中搜索使指标最优的阈值。
+
+    注意：对高度不平衡的数据（异常比例 <1%），不能用 p1~p99 作为搜索范围，
+    因为 p99 可能为 0。改为用实际分数分布的有效范围来搜索。
     """
-    lo, hi = float(np.percentile(anomaly_scores, 1)), float(np.percentile(anomaly_scores, 99))
+    s_min = float(anomaly_scores.min())
+    s_max = float(anomaly_scores.max())
+
+    if s_max <= s_min + 1e-9:
+        # 所有分数相同，无法区分
+        result = evaluate_all(y_true, anomaly_scores, s_min)
+        return s_min, result
+
+    # 在 [min, max] 上均匀搜索，覆盖从"全部标记"到"全部忽略"的完整范围
     best_score = -1.0
     best_result = None
-    best_thresh = lo
+    best_thresh = s_min
 
-    for thresh in np.linspace(lo, hi, n_thresholds):
+    for thresh in np.linspace(s_min, s_max, n_thresholds):
         result = evaluate_all(y_true, anomaly_scores, thresh)
         if metric == "event_f05":
             score = result["event_wise"]["f0.5"]
