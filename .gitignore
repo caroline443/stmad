@@ -18,7 +18,13 @@ data/raw/
 *.h5
 *.csv
 
-# Checkpoints and logs (optionally track with DVC)
+# Experiment runs: 不 commit 大文件 (.pt)，但保留 metrics/config 可选 commit
+runs/**/*.pt          # 模型权重太大，不入库
+runs/**/stmad.log     # 全量日志不入库
+# 如需保留 metrics.json / config.yaml / train_log.csv，注释掉下面这行:
+# runs/
+
+# 旧的单一目录（已废弃）
 checkpoints/
 logs/
 

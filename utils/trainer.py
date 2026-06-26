@@ -1,17 +1,13 @@
 """
 Trainer — training and validation loop for STMAD.
 
-Handles:
-    • One epoch of training (MSE loss, gradient clipping)
-    • Validation loss computation
-    • Model checkpointing (best val loss)
-    • Optional W&B logging
+所有输出（checkpoint / 训练曲线）保存到 run_dir，永不覆盖不同实验。
 """
 
 from __future__ import annotations
 
+import csv
 import logging
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -30,20 +26,13 @@ class Trainer:
     """Training orchestrator for STMAD.
 
     Args:
-        model:          STMAD model
-        train_loader:   training DataLoader (yields x or (x, y))
-        val_loader:     validation DataLoader (may be None)
-        config:         merged config dict
-        device:         torch device
-        checkpoint_dir: directory to save best model weights
-
-    Usage::
-
-        trainer = Trainer(model, train_loader, val_loader, config, device)
-        for epoch in range(config["epochs"]):
-            train_loss = trainer.train_epoch(epoch)
-            val_loss   = trainer.validate()
-            trainer.save_if_best(val_loss, epoch)
+        model:        STMAD model
+        train_loader: training DataLoader
+        val_loader:   validation DataLoader (may be None)
+        config:       merged config dict
+        device:       torch device
+        run_dir:      run-specific output directory (contains best.pt, last.pt)
+        log_csv:      path to per-epoch CSV log (optional; defaults to run_dir/train_log.csv)
     """
 
     def __init__(
@@ -53,15 +42,20 @@ class Trainer:
         val_loader: Optional[DataLoader],
         config: dict,
         device: torch.device,
-        checkpoint_dir: str | Path = "checkpoints",
+        run_dir: str | Path,
+        log_csv: str | Path | None = None,
     ) -> None:
-        self.model       = model.to(device)
+        self.model        = model.to(device)
         self.train_loader = train_loader
         self.val_loader   = val_loader
         self.config       = config
         self.device       = device
-        self.checkpoint_dir = Path(checkpoint_dir)
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.run_dir      = Path(run_dir)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+
+        # CSV log
+        self._csv_path = Path(log_csv) if log_csv else self.run_dir / "train_log.csv"
+        self._init_csv()
 
         # Optimiser
         self.optimizer = AdamW(
@@ -69,15 +63,13 @@ class Trainer:
             lr=config.get("learning_rate", 5e-4),
             weight_decay=config.get("weight_decay", 4e-4),
         )
-
-        # Scheduler: cosine annealing over all epochs
         self.scheduler = CosineAnnealingLR(
             self.optimizer,
             T_max=config.get("epochs", 70),
             eta_min=1e-6,
         )
 
-        self.grad_clip   = config.get("grad_clip", 1.0)
+        self.grad_clip     = config.get("grad_clip", 1.0)
         self.best_val_loss = float("inf")
 
         # Optional W&B
@@ -89,24 +81,23 @@ class Trainer:
             except ImportError:
                 logger.warning("wandb not installed; skipping W&B logging")
 
+    # ── CSV init ──────────────────────────────────────────────────────────────
+
+    def _init_csv(self) -> None:
+        with open(self._csv_path, "w", newline="") as f:
+            csv.writer(f).writerow(["epoch", "train_loss", "val_loss", "lr"])
+
     # ── Training epoch ────────────────────────────────────────────────────────
 
     def train_epoch(self, epoch: int) -> float:
-        """Run one training epoch.
-
-        Returns
-        -------
-        mean train loss
-        """
         self.model.train()
         total_loss = 0.0
         n_batches  = 0
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:3d} [train]", leave=False)
         for batch in pbar:
-            x = self._unpack(batch).to(self.device)  # (B, T, N)
-
-            x_hat = self.model(x)                    # (B, T, N)
+            x     = self._unpack(batch).to(self.device)
+            x_hat = self.model(x)
             loss  = F.mse_loss(x_hat, x)
 
             self.optimizer.zero_grad()
@@ -120,68 +111,65 @@ class Trainer:
             pbar.set_postfix(loss=f"{loss.item():.6f}")
 
         self.scheduler.step()
-        mean_loss = total_loss / max(n_batches, 1)
-
-        if self._wandb is not None:
-            self._wandb.log({"train/loss": mean_loss, "train/lr": self._lr()}, step=epoch)
-
-        return mean_loss
+        return total_loss / max(n_batches, 1)
 
     # ── Validation ────────────────────────────────────────────────────────────
 
     @torch.no_grad()
     def validate(self) -> float:
-        """Compute validation MSE loss.
-
-        Returns 0.0 if no val_loader is set.
-        """
         if self.val_loader is None:
             return 0.0
-
         self.model.eval()
         total_loss = 0.0
         n_batches  = 0
-
         for batch in self.val_loader:
-            x    = self._unpack(batch).to(self.device)
+            x     = self._unpack(batch).to(self.device)
             x_hat = self.model(x)
             total_loss += F.mse_loss(x_hat, x).item()
             n_batches  += 1
-
         return total_loss / max(n_batches, 1)
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+
+    def log_epoch(self, epoch: int, train_loss: float, val_loss: float) -> None:
+        """Append one row to train_log.csv and optionally to W&B."""
+        lr = self._lr()
+        with open(self._csv_path, "a", newline="") as f:
+            csv.writer(f).writerow([epoch, f"{train_loss:.8f}", f"{val_loss:.8f}", f"{lr:.2e}"])
+
+        if self._wandb is not None:
+            self._wandb.log(
+                {"train/loss": train_loss, "val/loss": val_loss, "train/lr": lr},
+                step=epoch,
+            )
 
     # ── Checkpointing ─────────────────────────────────────────────────────────
 
     def save_if_best(self, val_loss: float, epoch: int) -> bool:
-        """Save model weights if val_loss is the best seen so far.
-
-        Returns True if the model was saved.
-        """
+        """Overwrite best.pt only when val_loss improves."""
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
-            path = self.checkpoint_dir / "best_model.pt"
-            torch.save(
-                {
-                    "epoch":      epoch,
-                    "state_dict": self.model.state_dict(),
-                    "val_loss":   val_loss,
-                    "config":     self.config,
-                },
-                path,
+            self._save("best.pt", epoch, val_loss)
+            logger.info(
+                f"  ✓ new best  val_loss={val_loss:.6f}  → {self.run_dir}/best.pt"
             )
-            logger.info(f"Epoch {epoch}: new best val_loss={val_loss:.6f}  → saved to {path}")
             return True
         return False
 
-    def save_checkpoint(self, epoch: int, tag: str = "last") -> Path:
-        """Save a named checkpoint (e.g. last epoch)."""
-        path = self.checkpoint_dir / f"{tag}_model.pt"
+    def save_last(self, epoch: int) -> Path:
+        """Save last.pt at the end of training."""
+        return self._save("last.pt", epoch, self.best_val_loss)
+
+    def _save(self, filename: str, epoch: int, val_loss: float) -> Path:
+        path = self.run_dir / filename
         torch.save(
             {
                 "epoch":      epoch,
                 "state_dict": self.model.state_dict(),
-                "val_loss":   self.best_val_loss,
+                "val_loss":   val_loss,
                 "config":     self.config,
+                "optimizer":  self.optimizer.state_dict(),
+                "scheduler":  self.scheduler.state_dict(),
             },
             path,
         )
@@ -191,10 +179,7 @@ class Trainer:
 
     @staticmethod
     def _unpack(batch) -> torch.Tensor:
-        """Extract the x tensor from a batch that may be (x,) or (x, y)."""
-        if isinstance(batch, (list, tuple)):
-            return batch[0]
-        return batch
+        return batch[0] if isinstance(batch, (list, tuple)) else batch
 
     def _lr(self) -> float:
         return self.optimizer.param_groups[0]["lr"]
