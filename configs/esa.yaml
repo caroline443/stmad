@@ -10,7 +10,7 @@ dataset: esa
 data_path: /root/autodl-tmp/data/ESA-Mission1
 n_sensors: 6
 window_size: 250           # matches PSTG context window L=250
-top_k: 3                   # GAT top-k neighbors (all-but-self for 6 sensors)
+top_k: 4                   # 对齐 PSTG γ=0.1：N=6, 0.1×6×6≈4 edges/node
 
 batch_size: 70
 train_stride: 125          # 训练时每隔 125 步取一个窗口（与 p_main 相同量级）

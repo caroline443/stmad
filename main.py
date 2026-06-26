@@ -362,7 +362,7 @@ def main():
         batch_size  =config["batch_size"],
         num_workers =config.get("num_workers", 4),
         val_data    =val_data,
-        train_stride=1,
+        train_stride=config.get("train_stride", 1),
         test_stride =config.get("stride", 1),
     )
 
