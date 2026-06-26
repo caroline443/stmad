@@ -35,6 +35,7 @@ n_layers: 2
 dropout: 0.1
 
 epochs: 70
+patience: 0          # 关闭早停，跑满 70 epoch（对齐 PSTG）
 learning_rate: 5.0e-4
 weight_decay: 4.0e-4
 grad_clip: 1.0

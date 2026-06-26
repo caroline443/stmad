@@ -218,7 +218,7 @@ def run_evaluation(
         if val_labels is not None and len(np.unique(val_labels)) > 1:
             thr.fit_optimal(val_scores, val_labels, beta=beta)
         else:
-            thr.fit(train_scores)
+            thr.fit(val_scores)   # 对齐 PSTG：用 val scores 的分位数，不用 train
     else:
         thr.fit(train_scores)
 

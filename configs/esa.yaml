@@ -13,6 +13,7 @@ window_size: 250           # matches PSTG context window L=250
 top_k: 4                   # 对齐 PSTG γ=0.1：N=6, 0.1×6×6≈4 edges/node
 
 batch_size: 70
+patience: 0          # 关闭早停，跑满 70 epoch（对齐 PSTG）
 train_stride: 125          # 训练时每隔 125 步取一个窗口（与 p_main 相同量级）
                            # 15M × 0.5 / 125 ≈ 6.1万个训练窗口，每 epoch 约几分钟
 stride: 25                 # 测试评分时步长，够细粒度又不至于 OOM
