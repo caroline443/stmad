@@ -1,12 +1,12 @@
 # ── Model ─────────────────────────────────────────────────────────────────────
-d_model: 64          # embedding dimension
-d_state: 16          # Mamba SSM state dimension
-d_conv: 4            # Mamba conv width
-expand: 2            # Mamba expansion factor
-n_heads: 4           # GAT attention heads
-n_layers: 2          # number of STMAD blocks
-patch_sizes: [25, 50, 125]   # multi-scale patch sizes (finest first)
-dropout: 0.1
+d_model: 512         # embedding dimension — 对齐 PSTG (D=512)
+d_state: 64          # Mamba SSM state dimension（随 d_model 等比放大）
+d_conv: 4            # Mamba conv width（标准设置）
+expand: 2            # Mamba inner-dim expansion（标准设置）
+n_heads: 4           # GAT attention heads — 对齐 PSTG (H=4)，512/4=128 per head
+n_layers: 2          # STMAD blocks — 对齐 PSTG (n_L=2)
+patch_sizes: [25, 50, 125]   # 对齐 PSTG (P=[25,50,125])
+dropout: 0.1         # 对齐 PSTG (P_dropout=0.1)
 
 # ── Training ──────────────────────────────────────────────────────────────────
 epochs: 70

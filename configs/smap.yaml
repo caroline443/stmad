@@ -11,5 +11,5 @@ window_size: 100
 patch_sizes: [10, 20, 50]
 top_k: 5                    # GAT top-k neighbors (K ≈ 0.2*N)
 
-batch_size: 64
+batch_size: 256
 stride: 1
