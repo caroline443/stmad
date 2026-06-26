@@ -72,6 +72,10 @@ class Trainer:
         self.grad_clip     = config.get("grad_clip", 1.0)
         self.best_val_loss = float("inf")
 
+        # Early stopping
+        self.patience      = config.get("patience", 0)   # 0 = 关闭
+        self._no_improve   = 0                            # 连续未改善 epoch 数
+
         # Optional W&B
         self._wandb = None
         if config.get("use_wandb", False):
@@ -146,15 +150,26 @@ class Trainer:
     # ── Checkpointing ─────────────────────────────────────────────────────────
 
     def save_if_best(self, val_loss: float, epoch: int) -> bool:
-        """Overwrite best.pt only when val_loss improves."""
+        """Overwrite best.pt only when val_loss improves.
+        同时更新早停计数器。
+        """
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
+            self._no_improve   = 0
             self._save("best.pt", epoch, val_loss)
             logger.info(
                 f"  ✓ new best  val_loss={val_loss:.6f}  → {self.run_dir}/best.pt"
             )
             return True
-        return False
+        else:
+            self._no_improve += 1
+            return False
+
+    def should_stop(self) -> bool:
+        """早停判断：patience=0 表示不启用早停。"""
+        if self.patience <= 0:
+            return False
+        return self._no_improve >= self.patience
 
     def save_last(self, epoch: int) -> Path:
         """Save last.pt at the end of training."""

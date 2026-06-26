@@ -150,16 +150,17 @@ def run_training(model, train_loader, val_loader, config, device, run_dir: Path)
         logger.warning("No validation loader — model selection uses train loss. "
                        "Set val_ratio > 0 in config to enable a validation split.")
 
+    patience = config.get("patience", 0)
+    if patience > 0:
+        logger.info(f"Early stopping: patience={patience} epochs")
+
     for epoch in range(1, epochs + 1):
         train_loss = trainer.train_epoch(epoch)
-        val_loss   = trainer.validate()  # returns 0.0 when val_loader is None
+        val_loss   = trainer.validate()
 
-        # Log NaN for val when there is no val set (avoids misleading 0.0 in CSV)
-        log_val = val_loss if has_val else float("nan")
-        trainer.log_epoch(epoch, train_loss, log_val)
-
-        # Model selection: prefer val_loss; fall back to train_loss if no val set
+        log_val        = val_loss if has_val else float("nan")
         selection_loss = val_loss if has_val else train_loss
+        trainer.log_epoch(epoch, train_loss, log_val)
         trainer.save_if_best(selection_loss, epoch)
 
         if epoch % 10 == 0 or epoch == epochs:
@@ -168,9 +169,18 @@ def run_training(model, train_loader, val_loader, config, device, run_dir: Path)
                 f"Epoch {epoch:3d}/{epochs} | "
                 f"train={train_loss:.6f} | val={val_str} | "
                 f"best={trainer.best_val_loss:.6f}"
+                + (f" | no_improve={trainer._no_improve}/{patience}"
+                   if patience > 0 else "")
             )
 
-    trainer.save_last(epochs)
+        if trainer.should_stop():
+            logger.info(
+                f"Early stopping at epoch {epoch} "
+                f"(no improvement for {patience} epochs)"
+            )
+            break
+
+    trainer.save_last(epoch)
     logger.info(f"Training complete.  Run dir: {run_dir}")
 
 

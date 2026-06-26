@@ -14,8 +14,9 @@ learning_rate: 5.0e-4
 weight_decay: 4.0e-4
 batch_size: 64
 num_workers: 4
-grad_clip: 1.0       # gradient clipping norm
-val_ratio: 0.1       # fraction of train data used as validation (if no separate val)
+grad_clip: 1.0
+val_ratio: 0.1
+patience: 10         # 早停：连续 N epoch val_loss 不改善则停止；0 = 关闭
 
 # ── Anomaly Scoring ────────────────────────────────────────────────────────────
 stride: 1            # sliding window stride during inference
