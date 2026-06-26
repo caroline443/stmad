@@ -44,6 +44,7 @@ class Trainer:
         device: torch.device,
         run_dir: str | Path,
         log_csv: str | Path | None = None,
+        loss_fn=None,   # 自定义 loss 函数，None 时用 MSE
     ) -> None:
         self.model        = model.to(device)
         self.train_loader = train_loader
@@ -71,6 +72,7 @@ class Trainer:
 
         self.grad_clip     = config.get("grad_clip", 1.0)
         self.best_val_loss = float("inf")
+        self._loss_fn      = loss_fn   # None → 用 F.mse_loss
 
         # Early stopping
         self.patience      = config.get("patience", 0)   # 0 = 关闭
@@ -102,7 +104,7 @@ class Trainer:
         for batch in pbar:
             x, target = self._unpack_forecast(batch, self.device)
             x_hat = self.model(x)
-            loss  = F.mse_loss(x_hat, target)
+            loss  = self._loss_fn(x_hat, target) if self._loss_fn else F.mse_loss(x_hat, target)
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -129,7 +131,8 @@ class Trainer:
         for batch in self.val_loader:
             x, target = self._unpack_forecast(batch, self.device)
             x_hat     = self.model(x)
-            total_loss += F.mse_loss(x_hat, target).item()
+            loss_val  = self._loss_fn(x_hat, target) if self._loss_fn else F.mse_loss(x_hat, target)
+            total_loss += loss_val.item()
             n_batches  += 1
         return total_loss / max(n_batches, 1)
 

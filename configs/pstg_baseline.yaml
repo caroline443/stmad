@@ -23,8 +23,8 @@ esa_cache_path: null
 train_ratio: 0.5
 
 # ── 关键差异 ──────────────────────────────────────────────────────────────────
-model_type: transformer    # ← transformer（PSTG baseline）vs mamba（STMAD）
-forecast_horizon: 10      # 预测未来 10 步，对齐 PSTG (F=10)
+model_type: pstg           # 严格按论文公式实现的 PSTG
+forecast_horizon: 10      # F=10，对齐 PSTG
 
 # 其余超参与 PSTG Table 2/3 完全对齐
 d_model: 512

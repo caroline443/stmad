@@ -37,7 +37,7 @@ import torch
 import yaml
 
 from data   import build_dataloaders, load_smap_msl, load_esa
-from model  import build_model
+from model  import build_model, build_pstg, pstg_loss
 from anomaly import compute_anomaly_scores, DynamicThreshold
 from utils  import evaluate, Trainer, get_logger
 
@@ -131,8 +131,10 @@ def load_data(config: dict):
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def run_training(model, train_loader, val_loader, config, device, run_dir: Path) -> None:
-    log_csv = run_dir / "train_log.csv"
-    trainer = Trainer(
+    log_csv    = run_dir / "train_log.csv"
+    model_type = config.get("model_type", "mamba")
+    loss_fn    = pstg_loss if model_type == "pstg" else None
+    trainer    = Trainer(
         model        = model,
         train_loader = train_loader,
         val_loader   = val_loader,
@@ -140,6 +142,7 @@ def run_training(model, train_loader, val_loader, config, device, run_dir: Path)
         device       = device,
         run_dir      = run_dir,
         log_csv      = log_csv,
+        loss_fn      = loss_fn,
     )
 
     epochs = config.get("epochs", 70)
@@ -377,8 +380,12 @@ def main():
     )
 
     # ── Model ─────────────────────────────────────────────────────────────
-    model = build_model(config).to(device)
-    logger.info(f"Model   : {model.count_parameters():,} parameters")
+    model_type = config.get("model_type", "mamba")
+    if model_type == "pstg":
+        model = build_pstg(config).to(device)
+    else:
+        model = build_model(config).to(device)
+    logger.info(f"Model   : {model.count_parameters():,} parameters  [{model_type}]")
 
     # ── Train ─────────────────────────────────────────────────────────────
     if args.mode in ("train", "both"):
