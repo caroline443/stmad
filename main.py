@@ -173,14 +173,14 @@ def run_training(model, train_loader, val_loader, config, device, run_dir: Path)
                    if patience > 0 else "")
             )
 
+        trainer.save_last(epoch)   # 每 epoch 覆盖 last.pt，中断后可恢复
+
         if trainer.should_stop():
             logger.info(
                 f"Early stopping at epoch {epoch} "
                 f"(no improvement for {patience} epochs)"
             )
             break
-
-    trainer.save_last(epoch)
     logger.info(f"Training complete.  Run dir: {run_dir}")
 
 

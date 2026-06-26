@@ -177,6 +177,7 @@ class Trainer:
 
     def _save(self, filename: str, epoch: int, val_loss: float) -> Path:
         path = self.run_dir / filename
+        tmp  = path.with_suffix(".tmp")   # 先写临时文件
         torch.save(
             {
                 "epoch":      epoch,
@@ -186,8 +187,9 @@ class Trainer:
                 "optimizer":  self.optimizer.state_dict(),
                 "scheduler":  self.scheduler.state_dict(),
             },
-            path,
+            tmp,
         )
+        tmp.rename(path)   # 原子替换，写完再覆盖，避免中断导致损坏
         return path
 
     # ── Private ───────────────────────────────────────────────────────────────
