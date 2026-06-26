@@ -16,21 +16,17 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .mamba_encoder import MambaTemporalEncoder
-from .dynamic_gat   import DynamicGATLayer
+from .mamba_encoder       import MambaTemporalEncoder
+from .transformer_encoder import TransformerTemporalEncoder
+from .dynamic_gat         import DynamicGATLayer
 
 
 class STMADBlock(nn.Module):
-    """Single Mamba + Dynamic-GAT block with gated fusion.
+    """Single temporal-encoder + Dynamic-GAT block with gated fusion.
 
-    Args:
-        d_model:  embedding dimension
-        d_state:  Mamba SSM hidden state size
-        d_conv:   Mamba conv kernel width
-        expand:   Mamba inner-dimension expansion factor
-        n_heads:  number of GAT attention heads
-        top_k:    GAT top-k neighbour sparsity
-        dropout:  dropout rate (applied in both sub-modules and fusion)
+    temporal_encoder_type:
+        'mamba'       — Mamba SSM (STMAD，我们的模型，线性复杂度)
+        'transformer' — Multi-Head Self-Attention (PSTG baseline，二次复杂度)
 
     Input / output shape: (B, L, N, d_model)
     """
@@ -44,16 +40,25 @@ class STMADBlock(nn.Module):
         n_heads: int = 4,
         top_k: int = 5,
         dropout: float = 0.1,
+        temporal_encoder_type: str = "mamba",
     ) -> None:
         super().__init__()
 
-        self.mamba_enc = MambaTemporalEncoder(
-            d_model=d_model,
-            d_state=d_state,
-            d_conv=d_conv,
-            expand=expand,
-            dropout=dropout,
-        )
+        if temporal_encoder_type == "transformer":
+            self.temporal_enc = TransformerTemporalEncoder(
+                d_model=d_model,
+                n_heads=n_heads,
+                dropout=dropout,
+            )
+        else:  # mamba（默认）
+            self.temporal_enc = MambaTemporalEncoder(
+                d_model=d_model,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+                dropout=dropout,
+            )
+
         self.gat_enc = DynamicGATLayer(
             d_model=d_model,
             n_heads=n_heads,
@@ -79,7 +84,7 @@ class STMADBlock(nn.Module):
         Returns:
             H_out: (B, L, N, d_model)
         """
-        H_time  = self.mamba_enc(H)                   # (B, L, N, d)
+        H_time  = self.temporal_enc(H)                 # (B, L, N, d)
         H_space = self.gat_enc(H)                     # (B, L, N, d)
 
         # Gated fusion: g ∈ (0,1) weights the temporal stream

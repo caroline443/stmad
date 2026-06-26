@@ -1,0 +1,47 @@
+# PSTG Baseline 配置 — 用于复现 PSTG 结果
+# 架构：Transformer 时序编码 + 动态 GAT 空间编码（与 PSTG 一致）
+# 与 STMAD 的唯一差异：temporal_encoder = transformer（而非 mamba）
+#
+# 用法：python main.py --config configs/pstg_baseline.yaml
+# 对比：python main.py --config configs/esa.yaml  （STMAD，Mamba版本）
+
+# 继承 ESA 数据配置
+dataset: esa
+data_path: /root/autodl-tmp/data/ESA-Mission1
+n_sensors: 6
+window_size: 250
+patch_sizes: [25, 50, 125]
+top_k: 4
+batch_size: 70
+train_stride: 125
+stride: 25
+p_fit: 0.21
+
+esa_subsystem: 5
+esa_channel_ids: [41, 42, 43, 44, 45, 46]
+esa_cache_path: null
+train_ratio: 0.5
+
+# ── 关键差异 ──────────────────────────────────────────────────────────────────
+model_type: transformer    # ← transformer（PSTG baseline）vs mamba（STMAD）
+
+# 其余超参与 PSTG Table 2/3 完全对齐
+d_model: 512
+d_state: 64               # transformer 模式下不使用，保留字段
+d_conv: 4
+expand: 2
+n_heads: 4
+n_layers: 2
+dropout: 0.1
+
+epochs: 70
+learning_rate: 5.0e-4
+weight_decay: 4.0e-4
+grad_clip: 1.0
+num_workers: 4
+val_ratio: 0.1
+
+p_s: 0.05
+n_s: 30
+beta: 0.5
+use_wandb: false

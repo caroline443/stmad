@@ -53,6 +53,7 @@ class STMAD(nn.Module):
         patch_sizes: list[int] | None = None,
         top_k: int = 5,
         dropout: float = 0.1,
+        temporal_encoder_type: str = "mamba",   # "mamba" | "transformer"
     ) -> None:
         super().__init__()
 
@@ -85,6 +86,7 @@ class STMAD(nn.Module):
                 n_heads=n_heads,
                 top_k=top_k,
                 dropout=dropout,
+                temporal_encoder_type=temporal_encoder_type,
             )
             for _ in range(n_layers)
         ])
@@ -134,17 +136,21 @@ def build_model(config: dict) -> STMAD:
         n_sensors, window_size, d_model, d_state, d_conv, expand,
         n_heads, n_layers, patch_sizes, top_k, dropout
     """
+    # model_type: "mamba"（STMAD，默认）或 "transformer"（PSTG baseline）
+    model_type = config.get("model_type", "mamba")
+
     model = STMAD(
-        n_sensors   = config["n_sensors"],
-        window_size = config["window_size"],
-        d_model     = config.get("d_model",    64),
-        d_state     = config.get("d_state",    16),
-        d_conv      = config.get("d_conv",     4),
-        expand      = config.get("expand",     2),
-        n_heads     = config.get("n_heads",    4),
-        n_layers    = config.get("n_layers",   2),
-        patch_sizes = config.get("patch_sizes", [25, 50, 125]),
-        top_k       = config.get("top_k",      5),
-        dropout     = config.get("dropout",    0.1),
+        n_sensors              = config["n_sensors"],
+        window_size            = config["window_size"],
+        d_model                = config.get("d_model",    512),
+        d_state                = config.get("d_state",    64),
+        d_conv                 = config.get("d_conv",     4),
+        expand                 = config.get("expand",     2),
+        n_heads                = config.get("n_heads",    4),
+        n_layers               = config.get("n_layers",   2),
+        patch_sizes            = config.get("patch_sizes", [25, 50, 125]),
+        top_k                  = config.get("top_k",      5),
+        dropout                = config.get("dropout",    0.1),
+        temporal_encoder_type  = model_type,
     )
     return model
