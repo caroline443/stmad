@@ -48,25 +48,25 @@ def run_inference_ma(
     推理，同时收集预测值 x_pred 和记忆重构误差 mem_error。
 
     Returns:
-        x_pred    : [T, C]  预测序列
-        mem_errors: [T]     每个时间步的记忆重构误差
+        x_pred    : [T, C]  主预测序列
+        x_pred_mem: [T, C]  记忆引导预测序列（v2：数据空间，与 x_pred 同量级）
     """
     model.eval()
     all_preds      = []
-    all_mem_errors = []
+    all_mem_errors = []   # 存 x_hat_mem（名称保持兼容）
 
     for context, _ in tqdm(loader, desc="  推理（双信号）"):
-        context = context.to(device, non_blocking=True)      # [B, C, L]
-        x_hat, mem_outputs = model(context)                  # [B,C,F], dict
+        context = context.to(device, non_blocking=True)           # [B, C, L]
+        x_hat, x_hat_mem, mem_outputs = model(context)            # v2：3个返回值
 
-        # 预测值（只保留前 τ 步）
+        # Signal 1：主预测（只保留前 τ 步）
         pred_tau = x_hat[:, :, :tau].permute(0, 2, 1).reshape(-1, x_hat.shape[1])
         all_preds.append(pred_tau.cpu().numpy())
 
-        # 记忆误差：每个样本一个标量，重复 τ 次对齐时间轴
-        mem_err = mem_outputs["mem_error"].cpu().numpy()     # [B]
-        mem_err = np.repeat(mem_err, tau)                    # [B*τ]
-        all_mem_errors.append(mem_err)
+        # Signal 2：记忆引导预测（v2：在数据空间，与主预测同量级）
+        # 存储 x_hat_mem 的前 τ 步，评估时与 x_true 作差得到误差
+        pred_mem_tau = x_hat_mem[:, :, :tau].permute(0, 2, 1).reshape(-1, x_hat_mem.shape[1])
+        all_mem_errors.append(pred_mem_tau.cpu().numpy())
 
     x_pred     = np.concatenate(all_preds,      axis=0).astype(np.float32)
     mem_errors = np.concatenate(all_mem_errors, axis=0).astype(np.float32)
@@ -74,37 +74,35 @@ def run_inference_ma(
 
 
 def dual_signal_scores(
-    x_true:     np.ndarray,   # [T, C]
-    x_pred:     np.ndarray,   # [T, C]
-    mem_errors: np.ndarray,   # [T]
-    alpha:      float,        # 预测残差权重
+    x_true:      np.ndarray,   # [T, C]  真实值
+    x_pred:      np.ndarray,   # [T, C]  主预测
+    x_pred_mem:  np.ndarray,   # [T, C]  记忆引导预测（v2：数据空间）
+    alpha:       float,         # 主预测残差权重
     smooth_window: int,
 ) -> tuple:
     """
-    融合预测残差和记忆重构误差，输出最终异常分数。
+    v2：两路信号均在数据空间计算，量级相同，信号更强。
 
     Returns:
-        raw_combined: [T] 融合后的原始平滑分数（用于阈值搜索）
-        r_pred_smooth: [T] 预测残差（用于对比可视化）
-        r_mem_smooth:  [T] 记忆误差（用于对比可视化）
+        combined:      [T] 融合分数（用于阈值搜索）
+        r_pred_smooth: [T] 主预测残差
+        r_mem_smooth:  [T] 记忆引导残差
     """
-    # Signal 1: 预测残差（跨通道最大值）
+    # Signal 1：主预测残差（跨通道最大值）
     r_pred = np.abs(x_true - x_pred).max(axis=1)
     r_pred_smooth = smooth_residuals(r_pred, smooth_window).astype(np.float32)
 
-    # Signal 2: 记忆重构误差（已是标量，只做平滑）
-    r_mem_smooth = smooth_residuals(mem_errors, smooth_window).astype(np.float32)
+    # Signal 2：记忆引导预测残差（v2 核心改动：数据空间，同量级）
+    r_mem = np.abs(x_true - x_pred_mem).max(axis=1)
+    r_mem_smooth = smooth_residuals(r_mem, smooth_window).astype(np.float32)
 
-    # 归一化到 [0,1] 再加权融合（避免量纲不同）
+    # MinMax 归一化后加权融合
     def minmax(x):
         lo, hi = x.min(), x.max()
         return (x - lo) / (hi - lo + 1e-9)
 
-    r1 = minmax(r_pred_smooth)
-    r2 = minmax(r_mem_smooth)
-
-    raw_combined = alpha * r1 + (1 - alpha) * r2
-    return raw_combined, r_pred_smooth, r_mem_smooth
+    combined = alpha * minmax(r_pred_smooth) + (1 - alpha) * minmax(r_mem_smooth)
+    return combined, r_pred_smooth, r_mem_smooth
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -172,7 +170,7 @@ def main():
     test_data   = data["test_data"]
 
     print("\n=== 双信号推理 ===")
-    x_pred, mem_errors = run_inference_ma(model, test_loader, device, cfg.TAU)
+    x_pred, x_pred_mem = run_inference_ma(model, test_loader, device, cfg.TAU)
     T_pred = len(x_pred)
     print(f"预测序列长度：{T_pred:,}")
 
@@ -180,14 +178,13 @@ def main():
     y_true = test_labels[cfg.CONTEXT_LEN : cfg.CONTEXT_LEN + T_pred]
 
     # ── 双信号融合 ────────────────────────────────────────────────────────
-    print("\n=== 双信号融合异常检测 ===")
-    mem_errors_aligned = mem_errors[:T_pred]
+    print("\n=== 双信号融合异常检测（v2：数据空间）===")
     combined, r_pred_s, r_mem_s = dual_signal_scores(
-        x_true, x_pred, mem_errors_aligned, alpha, cfg.smooth_window
+        x_true, x_pred, x_pred_mem[:T_pred], alpha, cfg.smooth_window
     )
-    print(f"  预测残差范围：[{r_pred_s.min():.4f}, {r_pred_s.max():.4f}]")
-    print(f"  记忆误差范围：[{r_mem_s.min():.4f}, {r_mem_s.max():.4f}]")
-    print(f"  融合分数范围：[{combined.min():.4f}, {combined.max():.4f}]")
+    print(f"  主预测残差范围：  [{r_pred_s.min():.4f}, {r_pred_s.max():.4f}]")
+    print(f"  记忆引导残差范围：[{r_mem_s.min():.4f}, {r_mem_s.max():.4f}]  ← v2 与主残差同量级")
+    print(f"  融合分数范围：    [{combined.min():.4f}, {combined.max():.4f}]")
 
     # ── 评估 ──────────────────────────────────────────────────────────────
     print("\n=== 评估 ===")
@@ -226,9 +223,9 @@ def main():
         "eval_time":   datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     eval_mgr.save_results(metrics, info)
-    np.save(eval_mgr.eval_dir / "combined_scores.npy",  combined)
-    np.save(eval_mgr.eval_dir / "pred_residuals.npy",   r_pred_s)
-    np.save(eval_mgr.eval_dir / "memory_errors.npy",    r_mem_s)
+    np.save(eval_mgr.eval_dir / "combined_scores.npy",   combined)
+    np.save(eval_mgr.eval_dir / "pred_residuals.npy",    r_pred_s)
+    np.save(eval_mgr.eval_dir / "memory_residuals.npy",  r_mem_s)   # v2：数据空间残差
     print(f"\n  → 结果保存至：{eval_mgr.eval_dir}")
 
     # ── 绘图 ──────────────────────────────────────────────────────────────

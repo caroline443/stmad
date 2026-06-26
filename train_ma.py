@@ -61,18 +61,10 @@ def train_one_epoch_ma(
         context = context.to(device, non_blocking=True)   # [B, C, L]
         future  = future.to(device,  non_blocking=True)   # [B, C, F]
 
-        # 前向
-        x_hat, mem_outputs = model(context)               # [B,C,F], dict
+        # 前向（v2：同时返回主预测和记忆引导预测）
+        x_hat, x_hat_mem, mem_outputs = model(context)
 
-        # 记忆库作用的是 H^[nL]；为了避免重复前向，直接从 mem_outputs 取
-        # （loss 需要 h_graph 来计算重构误差；我们在 forward 里已经在 mem_outputs 中存了）
-        # 实际上 loss 里只用了 mem_outputs["z_hat"] 和 mem_outputs["entropy"]，
-        # 以及 h_graph（即 z_hat 的来源）。
-        # 为了干净，这里从模型临时保存的中间量获取 h_graph。
-        # 简洁做法：在 model.forward 里保存 h 到 self._last_h
-        h_graph = model._last_h  # 见 PSTG_MA.forward 最后添加
-
-        loss, detail = criterion(x_hat, future, mem_outputs, h_graph, epoch)
+        loss, detail = criterion(x_hat, x_hat_mem, future, mem_outputs, epoch)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -103,8 +95,8 @@ def validate_ma(model, loader, criterion, device, epoch):
     for context, future in tqdm(loader, desc=f"Epoch {epoch:03d} [val]  ", leave=False):
         context = context.to(device, non_blocking=True)
         future  = future.to(device,  non_blocking=True)
-        x_hat, _ = model(context)
-        # 只用预测损失做验证（记忆库 loss 不稳定，不适合做 checkpoint 判断）
+        x_hat, x_hat_mem, _ = model(context)
+        # 验证集只看主预测 loss（记忆 loss 不稳定，不用于 checkpoint 判断）
         from utils.loss import PSTGLoss
         pred_loss = PSTGLoss(lambda1=criterion.pred_loss.lambda1,
                              lambda2=criterion.pred_loss.lambda2)
