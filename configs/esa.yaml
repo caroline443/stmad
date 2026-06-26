@@ -12,8 +12,10 @@ n_sensors: 6
 window_size: 250           # matches PSTG context window L=250
 top_k: 3                   # GAT top-k neighbors (all-but-self for 6 sensors)
 
-batch_size: 70             # matches PSTG
-stride: 1                  # fine-grained inference
+batch_size: 70
+train_stride: 125          # 训练时每隔 125 步取一个窗口（与 p_main 相同量级）
+                           # 15M × 0.5 / 125 ≈ 6.1万个训练窗口，每 epoch 约几分钟
+stride: 25                 # 测试评分时步长，够细粒度又不至于 OOM
 p_fit: 0.21               # PSTG threshold fitting percentage
 
 # ESA-specific: channel selection
