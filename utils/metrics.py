@@ -263,35 +263,58 @@ def find_best_threshold(
     anomaly_scores: np.ndarray,
     metric: str = "event_f05",
     n_thresholds: int = 200,
+    max_rate_multiplier: float = 5.0,
 ) -> Tuple[float, dict]:
     """
     在分数分布中搜索使指标最优的阈值。
 
-    注意：对高度不平衡的数据（异常比例 <1%），不能用 p1~p99 作为搜索范围，
-    因为 p99 可能为 0。改为用实际分数分布的有效范围来搜索。
+    关键约束：预测异常率不超过真实异常率的 max_rate_multiplier 倍。
+    这防止"把所有点都标为异常"的退化解——该解会让 event-wise F0.5=1.0
+    但实际上毫无意义（affiliation precision 会暴露问题）。
+
+    搜索范围：从 p50（只标最高分那半）到 p99.9（基本不标），
+    同时跳过超过预测率上限的阈值。
     """
+    true_rate  = max(float(y_true.mean()), 1e-5)
+    max_pred_rate = min(0.30, max_rate_multiplier * true_rate)
+
     s_min = float(anomaly_scores.min())
     s_max = float(anomaly_scores.max())
 
     if s_max <= s_min + 1e-9:
-        # 所有分数相同，无法区分
-        result = evaluate_all(y_true, anomaly_scores, s_min)
-        return s_min, result
+        result = evaluate_all(y_true, anomaly_scores, s_max)
+        return s_max, result
 
-    # 在 [min, max] 上均匀搜索，覆盖从"全部标记"到"全部忽略"的完整范围
-    best_score = -1.0
+    # 搜索范围从中位数到最大值，确保预测率不会太高
+    lo = float(np.percentile(anomaly_scores, 50))   # 最多标 50% 的点
+    hi = s_max
+
+    best_score  = -1.0
     best_result = None
-    best_thresh = s_min
+    best_thresh = hi  # 默认用最严格阈值
 
-    for thresh in np.linspace(s_min, s_max, n_thresholds):
-        result = evaluate_all(y_true, anomaly_scores, thresh)
+    for thresh in np.linspace(lo, hi, n_thresholds):
+        y_pred = (anomaly_scores > thresh).astype(np.int32)
+        pred_rate = float(y_pred.mean())
+
+        # 跳过预测率超限的阈值（防止退化解）
+        if pred_rate > max_pred_rate:
+            continue
+        # 跳过完全不预测的阈值
+        if pred_rate < 1e-6:
+            continue
+
+        # 阈值搜索阶段只用 event-wise（快），最后再算 affiliation
+        ew = event_wise_metrics(y_true, y_pred)
         if metric == "event_f05":
-            score = result["event_wise"]["f0.5"]
+            score = ew["f0.5"]
         else:
-            score = result["affiliation"]["f0.5"]
+            score = ew["f0.5"]  # 搜索阶段统一用 event_f05（affiliation 太慢）
+
         if score > best_score:
-            best_score = score
-            best_result = result
+            best_score  = score
             best_thresh = thresh
 
+    # 用最优阈值完整计算两组指标（affiliation 只算一次）
+    best_result = evaluate_all(y_true, anomaly_scores, best_thresh)
     return best_thresh, best_result
