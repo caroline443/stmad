@@ -292,35 +292,56 @@ def main():
 
     # ── 评估（直接用动态阈值二值输出，与论文评估协议一致）──────────────
     print("\n=== 评估 ===")
-    from utils.metrics import event_wise_metrics, affiliation_metrics
+    from utils.metrics import event_wise_metrics, affiliation_metrics, extract_events
 
     # detect_anomalies 已做阈值决策：>0 即为检测到的异常
     y_pred = (anomaly_scores > 0).astype(np.int32)
     pred_rate = float(y_pred.mean())
     print(f"  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
 
+    # ── 标准1：全部事件（含单点事件）────────────────────────────────────
     ew = event_wise_metrics(y_true, y_pred)
     af = affiliation_metrics(y_true, y_pred)
     best_thresh = float(raw_smoothed[y_pred == 1].min()) if y_pred.any() else 0.0
 
-    print("\n─── Event-wise 指标 ───")
-    print(f"  Precision : {ew['precision']:.4f}")
-    print(f"  Recall    : {ew['recall']:.4f}")
-    print(f"  F0.5      : {ew['f0.5']:.4f}  (论文目标: 0.917)")
+    n_events_all = len(extract_events(y_true))
+    print(f"\n─── 标准1：全部 {n_events_all} 个事件（含单点标注）───")
+    print(f"  Event-wise  P={ew['precision']:.4f}  R={ew['recall']:.4f}  F0.5={ew['f0.5']:.4f}")
+    print(f"  Affiliation P={af['precision']:.4f}  R={af['recall']:.4f}  F0.5={af['f0.5']:.4f}")
 
-    print("\n─── Affiliation-based 指标 ───")
-    print(f"  Precision : {af['precision']:.4f}")
-    print(f"  Recall    : {af['recall']:.4f}")
-    print(f"  F0.5      : {af['f0.5']:.4f}  (论文目标: 0.892)")
+    # ── 标准2：过滤单点事件（duration≥2，与 TimeEval/论文协议一致）──────
+    y_true_filt = np.zeros_like(y_true)
+    for s, e in extract_events(y_true):
+        if e - s + 1 >= 2:
+            y_true_filt[s:e+1] = 1
+    ew2 = event_wise_metrics(y_true_filt, y_pred)
+    af2 = affiliation_metrics(y_true_filt, y_pred)
+
+    n_events_filt = len(extract_events(y_true_filt))
+    print(f"\n─── 标准2：{n_events_filt} 个事件（duration≥2，与论文协议一致）───")
+    print(f"  Event-wise  P={ew2['precision']:.4f}  R={ew2['recall']:.4f}  "
+          f"F0.5={ew2['f0.5']:.4f}  (论文目标: 0.917)")
+    print(f"  Affiliation P={af2['precision']:.4f}  R={af2['recall']:.4f}  "
+          f"F0.5={af2['f0.5']:.4f}  (论文目标: 0.892)")
 
     # ── 保存 ──────────────────────────────────────────────────────────────
     metrics = {
+        # 标准1：全部事件
         "event_wise":  {"precision": float(ew["precision"]),
                         "recall":    float(ew["recall"]),
-                        "f0.5":      float(ew["f0.5"])},
+                        "f0.5":      float(ew["f0.5"]),
+                        "n_events":  n_events_all},
         "affiliation": {"precision": float(af["precision"]),
                         "recall":    float(af["recall"]),
                         "f0.5":      float(af["f0.5"])},
+        # 标准2：过滤单点（与论文对齐）
+        "event_wise_filt":  {"precision": float(ew2["precision"]),
+                             "recall":    float(ew2["recall"]),
+                             "f0.5":      float(ew2["f0.5"]),
+                             "n_events":  n_events_filt},
+        "affiliation_filt": {"precision": float(af2["precision"]),
+                             "recall":    float(af2["recall"]),
+                             "f0.5":      float(af2["f0.5"])},
         "threshold":         float(best_thresh),
         "pred_anomaly_rate": float(pred_rate),
         "target_event_f05":  0.917,

@@ -188,32 +188,57 @@ def main():
 
     # ── 评估 ──────────────────────────────────────────────────────────────
     print("\n=== 评估 ===")
+    from utils.metrics import extract_events
+
     best_thresh, best_result = find_best_threshold(y_true, combined, metric="event_f05")
+    y_pred = (combined > best_thresh).astype(np.int32)
+    pred_rate = float(y_pred.mean())
+    print(f"  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
 
     ew = best_result["event_wise"]
     af = best_result["affiliation"]
+    n_events_all = len(extract_events(y_true))
 
-    print("\n─── Event-wise 指标 ───")
-    print(f"  Precision : {ew['precision']:.4f}")
-    print(f"  Recall    : {ew['recall']:.4f}")
-    print(f"  F0.5      : {ew['f0.5']:.4f}  (PSTG 论文: 0.917)")
+    # ── 标准2：过滤单点事件（duration≥2，与论文协议一致）────────────────
+    y_true_filt = np.zeros_like(y_true)
+    for s, e in extract_events(y_true):
+        if e - s + 1 >= 2:
+            y_true_filt[s:e+1] = 1
+    from utils.metrics import event_wise_metrics, affiliation_metrics
+    ew2 = event_wise_metrics(y_true_filt, y_pred)
+    af2 = affiliation_metrics(y_true_filt, y_pred)
+    n_events_filt = len(extract_events(y_true_filt))
 
-    print("\n─── Affiliation-based 指标 ───")
-    print(f"  Precision : {af['precision']:.4f}")
-    print(f"  Recall    : {af['recall']:.4f}")
-    print(f"  F0.5      : {af['f0.5']:.4f}  (PSTG 论文: 0.892)")
+    print(f"\n─── 标准1：全部 {n_events_all} 个事件（含单点标注）───")
+    print(f"  Event-wise  P={ew['precision']:.4f}  R={ew['recall']:.4f}  F0.5={ew['f0.5']:.4f}")
+    print(f"  Affiliation P={af['precision']:.4f}  R={af['recall']:.4f}  F0.5={af['f0.5']:.4f}")
+
+    print(f"\n─── 标准2：{n_events_filt} 个事件（duration≥2，与论文协议一致）───")
+    print(f"  Event-wise  P={ew2['precision']:.4f}  R={ew2['recall']:.4f}  "
+          f"F0.5={ew2['f0.5']:.4f}  (PSTG复现: 0.921)")
+    print(f"  Affiliation P={af2['precision']:.4f}  R={af2['recall']:.4f}  "
+          f"F0.5={af2['f0.5']:.4f}  (PSTG复现: 0.741)")
 
     # ── 保存 ──────────────────────────────────────────────────────────────
     metrics = {
         "event_wise":  {"precision": float(ew["precision"]),
                         "recall":    float(ew["recall"]),
-                        "f0.5":      float(ew["f0.5"])},
+                        "f0.5":      float(ew["f0.5"]),
+                        "n_events":  n_events_all},
         "affiliation": {"precision": float(af["precision"]),
                         "recall":    float(af["recall"]),
                         "f0.5":      float(af["f0.5"])},
+        "event_wise_filt":  {"precision": float(ew2["precision"]),
+                             "recall":    float(ew2["recall"]),
+                             "f0.5":      float(ew2["f0.5"]),
+                             "n_events":  n_events_filt},
+        "affiliation_filt": {"precision": float(af2["precision"]),
+                             "recall":    float(af2["recall"]),
+                             "f0.5":      float(af2["f0.5"])},
         "threshold":         float(best_thresh),
+        "pred_anomaly_rate": float(pred_rate),
         "alpha_pred":        float(alpha),
-        "pstg_baseline":     {"event_f05": 0.917, "affil_f05": 0.892},
+        "pstg_baseline":     {"event_f05": 0.921, "affil_f05": 0.741},
     }
     info = {
         "ckpt_path":   ckpt_path,
@@ -245,6 +270,14 @@ def main():
     eval_mgr.finalize(metrics, info)
 
     print(f"\n{'='*50}")
+    print(f"PSTG-MA 评估完成！")
+    print(f"  [标准1 全部事件] Event F0.5 = {ew['f0.5']:.4f}  Affil F0.5 = {af['f0.5']:.4f}")
+    print(f"  [标准2 过滤单点] Event F0.5 = {ew2['f0.5']:.4f}  Affil F0.5 = {af2['f0.5']:.4f}  ← 与论文对比")
+    print(f"  PSTG 复现基线:   Event F0.5 = 0.9211  Affil F0.5 = 0.7410")
+    gain_e = ew2['f0.5'] - 0.9211
+    gain_a = af2['f0.5'] - 0.7410
+    print(f"  相比 PSTG 复现:  Event {gain_e:+.4f}，Affil {gain_a:+.4f}")
+    print(f"{'='*50}")
     print(f"PSTG-MA 评估完成！")
     print(f"  Event-wise  F0.5 = {ew['f0.5']:.4f}  (PSTG 论文: 0.917)")
     print(f"  Affiliation F0.5 = {af['f0.5']:.4f}  (PSTG 论文: 0.892)")
