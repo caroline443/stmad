@@ -118,8 +118,9 @@ def parse_args():
     p.add_argument("--no_plot",   action="store_true")
     p.add_argument("--method",    type=str,   default="pot",
                    choices=["pot", "robust"])
-    p.add_argument("--pot_alpha", type=float, default=4e-3)
-    p.add_argument("--pot_q0",    type=float, default=0.98)
+    p.add_argument("--pot_alpha",  type=float, default=4e-3)
+    p.add_argument("--pot_q0",     type=float, default=0.98)
+    p.add_argument("--min_peak_z", type=float, default=1.5)
     return p.parse_args()
 
 
@@ -198,6 +199,7 @@ def main():
     scores_c  = threshold_signal(
         combined.astype(np.float64),
         method=args.method, pot_q0=args.pot_q0, pot_alpha=args.pot_alpha,
+        min_peak_z=args.min_peak_z,
     )
     y_pred    = (scores_c > 0).astype(np.int32)
     pred_rate = float(y_pred.mean())

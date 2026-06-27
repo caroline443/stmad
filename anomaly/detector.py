@@ -183,7 +183,7 @@ def threshold_signal(
     method:     str   = "pot",
     pot_q0:     float = 0.98,
     pot_alpha:  float = 4e-3,
-    min_peak_z: float = 1.0,
+    min_peak_z: float = 1.5,
 ) -> np.ndarray:
     """
     对预计算的残差信号 r [T] 应用阈值，返回异常分数 [T]。
@@ -219,7 +219,7 @@ def detect_anomalies(
     smooth_window: int   = 105,
     p_tfi:         float = 0.21,  # 保留（兼容旧调用，不再使用）
     n_candidates:  int   = 300,   # 保留（兼容旧调用，不再使用）
-    min_peak_z:    float = 1.0,
+    min_peak_z:    float = 1.5,
     method:        str   = "pot",
     pot_q0:        float = 0.98,
     pot_alpha:     float = 4e-3,

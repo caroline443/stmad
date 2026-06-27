@@ -44,7 +44,8 @@ def parse_args():
     p.add_argument("--method",    type=str,   default="pot",
                    choices=["pot", "robust"])
     p.add_argument("--pot_alpha", type=float, default=4e-3)
-    p.add_argument("--pot_q0",    type=float, default=0.98)
+    p.add_argument("--pot_q0",     type=float, default=0.98)
+    p.add_argument("--min_peak_z", type=float, default=1.5)
     return p.parse_args()
 
 
@@ -97,6 +98,7 @@ def main():
         x_true=x_true, x_pred=x_pred,
         smooth_window=cfg.smooth_window,
         method=args.method, pot_alpha=args.pot_alpha, pot_q0=args.pot_q0,
+        min_peak_z=args.min_peak_z,
     )
 
     y_pred = (anomaly_scores > 0).astype(np.int32)

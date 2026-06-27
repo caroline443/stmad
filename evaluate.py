@@ -222,8 +222,10 @@ def parse_args():
                    help="阈值算法：pot=极值理论(默认)，robust=鲁棒正态拟合")
     p.add_argument("--pot_alpha", type=float, default=4e-3,
                    help="POT 目标超阈率，越小阈值越高（默认 4e-3，约等于ESA-AD真实异常率）")
-    p.add_argument("--pot_q0",    type=float, default=0.98,
+    p.add_argument("--pot_q0",     type=float, default=0.98,
                    help="POT 初始截断分位数（默认 0.98）")
+    p.add_argument("--min_peak_z", type=float, default=1.5,
+                   help="假阳性剪枝：序列峰值需超过 μ+z*σ 才保留（默认 1.5）")
     return p.parse_args()
 
 
@@ -235,9 +237,10 @@ def main():
     if args.device:   cfg.DEVICE     = args.device
     if args.output:   cfg.OUTPUT_DIR = args.output
 
-    method    = args.method
-    pot_alpha = args.pot_alpha
-    pot_q0    = args.pot_q0
+    method      = args.method
+    pot_alpha   = args.pot_alpha
+    pot_q0      = args.pot_q0
+    min_peak_z  = args.min_peak_z
 
     device = cfg.DEVICE if torch.cuda.is_available() else "cpu"
     print(f"使用设备：{device}")
@@ -298,6 +301,7 @@ def main():
         x_true=x_true, x_pred=x_pred,
         smooth_window=cfg.smooth_window,
         method=method, pot_alpha=pot_alpha, pot_q0=pot_q0,
+        min_peak_z=min_peak_z,
     )
     print(f"  平滑残差范围：[{raw_smoothed.min():.4f}, {raw_smoothed.max():.4f}]")
     print(f"  异常分数范围：[{anomaly_scores.min():.4f}, {anomaly_scores.max():.4f}]")
