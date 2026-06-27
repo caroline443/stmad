@@ -31,7 +31,7 @@ from config_ma import ConfigMA
 from data.dataset import build_datasets
 from models.pstg_ma import PSTG_MA
 from anomaly.detector import smooth_residuals, detect_anomalies
-from utils.metrics import find_best_threshold
+from utils.metrics import find_best_threshold  # noqa: F401 (备用)
 from evaluate import EvalManager, plot_results   # 复用 PSTG 的可视化
 
 
@@ -186,17 +186,24 @@ def main():
     print(f"  记忆引导残差范围：[{r_mem_s.min():.4f}, {r_mem_s.max():.4f}]  ← v2 与主残差同量级")
     print(f"  融合分数范围：    [{combined.min():.4f}, {combined.max():.4f}]")
 
-    # ── 评估 ──────────────────────────────────────────────────────────────
+    # ── 评估（与 PSTG 一致：用改进版 Telemanom 检测双信号融合分数）────────
     print("\n=== 评估 ===")
     from utils.metrics import extract_events
+    from anomaly.detector import _find_optimal_threshold, _compute_anomaly_scores
 
-    best_thresh, best_result = find_best_threshold(y_true, combined, metric="event_f05")
-    y_pred = (combined > best_thresh).astype(np.int32)
+    # 对 combined 信号（已在 [0,1] 区间）直接应用改进版 Telemanom 阈值
+    r_combined = combined.astype(np.float64)
+    mu_c    = float(np.mean(r_combined))
+    sigma_c = float(np.std(r_combined))
+    eps_c   = _find_optimal_threshold(r_combined)
+    scores_c = _compute_anomaly_scores(r_combined, eps_c, mu_c, sigma_c, min_peak_z=1.5)
+    y_pred = (scores_c > 0).astype(np.int32)
     pred_rate = float(y_pred.mean())
-    print(f"  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
+    print(f"  combined 阈值: {eps_c:.4f}  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
 
-    ew = best_result["event_wise"]
-    af = best_result["affiliation"]
+    from utils.metrics import event_wise_metrics, affiliation_metrics
+    ew = event_wise_metrics(y_true, y_pred)
+    af = affiliation_metrics(y_true, y_pred)
     n_events_all = len(extract_events(y_true))
 
     # ── 标准2：过滤单点事件（duration≥2，与论文协议一致）────────────────
@@ -204,7 +211,6 @@ def main():
     for s, e in extract_events(y_true):
         if e - s + 1 >= 2:
             y_true_filt[s:e+1] = 1
-    from utils.metrics import event_wise_metrics, affiliation_metrics
     ew2 = event_wise_metrics(y_true_filt, y_pred)
     af2 = affiliation_metrics(y_true_filt, y_pred)
     n_events_filt = len(extract_events(y_true_filt))
@@ -235,7 +241,7 @@ def main():
         "affiliation_filt": {"precision": float(af2["precision"]),
                              "recall":    float(af2["recall"]),
                              "f0.5":      float(af2["f0.5"])},
-        "threshold":         float(best_thresh),
+        "threshold":         float(eps_c),
         "pred_anomaly_rate": float(pred_rate),
         "alpha_pred":        float(alpha),
         "pstg_baseline":     {"event_f05": 0.921, "affil_f05": 0.741},
@@ -260,12 +266,12 @@ def main():
         plot_results(
             y_true=y_true, raw_smoothed=combined,
             anomaly_scores=combined, x_true=x_true, x_pred=x_pred,
-            threshold=best_thresh, eval_dir=eval_mgr.eval_dir,
+            threshold=eps_c, eval_dir=eval_mgr.eval_dir,
             n_channels=cfg.NUM_CHANNELS,
         )
         # 双信号对比图
         _plot_dual_signals(y_true, r_pred_s, r_mem_s, combined,
-                           best_thresh, alpha, eval_mgr.eval_dir)
+                           eps_c, alpha, eval_mgr.eval_dir)
 
     eval_mgr.finalize(metrics, info)
 
