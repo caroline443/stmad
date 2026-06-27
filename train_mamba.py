@@ -96,9 +96,12 @@ def main():
         if rp.exists():
             ckpt = torch.load(rp, map_location=device)
             model.load_state_dict(ckpt["model"])
-            optimizer.load_state_dict(ckpt["optimizer"])
-            scheduler.load_state_dict(ckpt["scheduler"])
-            start_epoch = ckpt["epoch"] + 1
+            # optimizer/scheduler 可能因热启动被重置为 None
+            if ckpt.get("optimizer") is not None:
+                optimizer.load_state_dict(ckpt["optimizer"])
+            if ckpt.get("scheduler") is not None:
+                scheduler.load_state_dict(ckpt["scheduler"])
+            start_epoch = ckpt.get("epoch", 0) + 1
             print(f"续训自 epoch {start_epoch}")
 
     ckpt_mgr = CheckpointManager(cfg.CHECKPOINT_DIR, save_every=args.save_every)
