@@ -220,8 +220,8 @@ def parse_args():
     p.add_argument("--method",    type=str,   default="pot",
                    choices=["pot", "robust"],
                    help="阈值算法：pot=极值理论(默认)，robust=鲁棒正态拟合")
-    p.add_argument("--pot_alpha", type=float, default=1e-3,
-                   help="POT 目标超阈率，越小阈值越高（默认 1e-3）")
+    p.add_argument("--pot_alpha", type=float, default=4e-3,
+                   help="POT 目标超阈率，越小阈值越高（默认 4e-3，约等于ESA-AD真实异常率）")
     p.add_argument("--pot_q0",    type=float, default=0.98,
                    help="POT 初始截断分位数（默认 0.98）")
     return p.parse_args()

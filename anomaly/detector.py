@@ -82,7 +82,8 @@ def _pot_threshold(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _robust_threshold(r: np.ndarray) -> float:
-    """鲁棒正态拟合 + 目标预测率校准（旧版方法）。"""
+    """鲁棒正态拟合 + 目标预测率校准（旧版方法）。
+    _find_optimal_threshold 是本函数的向后兼容别名。"""
     T = len(r)
     if T < 10:
         return float(np.max(r))
@@ -98,6 +99,10 @@ def _robust_threshold(r: np.ndarray) -> float:
 
     eps_pct  = float(np.percentile(r, 100.0 * (1.0 - target)))
     return max(eps_pct, eps_0)
+
+
+# 向后兼容别名（evaluate_ma.py 等旧脚本使用）
+_find_optimal_threshold = _robust_threshold
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,6 +175,41 @@ def _compute_anomaly_scores(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  对预计算残差直接应用阈值（供 evaluate_ma.py 等使用）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def threshold_signal(
+    r:          np.ndarray,   # 已平滑的一维残差信号
+    method:     str   = "pot",
+    pot_q0:     float = 0.98,
+    pot_alpha:  float = 4e-3,
+    min_peak_z: float = 1.0,
+) -> np.ndarray:
+    """
+    对预计算的残差信号 r [T] 应用阈值，返回异常分数 [T]。
+
+    与 detect_anomalies 的区别：
+      - 输入直接是残差（不做平滑），适合 evaluate_ma 等已自行构造信号的场合
+    """
+    r = r.astype(np.float64)
+    mu_r    = float(np.mean(r))
+    sigma_r = float(np.std(r))
+
+    if method == "pot":
+        eps = _pot_threshold(r, q0_pct=pot_q0, alpha=pot_alpha)
+    else:
+        eps = _robust_threshold(r)
+
+    scores = _compute_anomaly_scores(r, eps, mu_r, sigma_r, min_peak_z)
+    n_seq  = _count_sequences(scores > 0)
+    print(f"  [{method}] ε* = {eps:.5f}  "
+          f"初始pred_rate = {(r >= eps).mean()*100:.3f}%")
+    print(f"  剪枝后序列数 = {n_seq}  "
+          f"最终pred_rate = {(scores > 0).mean()*100:.3f}%")
+    return scores.astype(np.float32)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  完整 Φ 算子（对外接口，兼容旧参数签名）
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -182,7 +222,7 @@ def detect_anomalies(
     min_peak_z:    float = 1.0,
     method:        str   = "pot",
     pot_q0:        float = 0.98,
-    pot_alpha:     float = 1e-3,
+    pot_alpha:     float = 4e-3,
 ) -> np.ndarray:
     """
     Φ 算子：输入真值和预测，输出连续异常分数 S ∈ R^T。

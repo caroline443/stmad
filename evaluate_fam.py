@@ -42,11 +42,15 @@ def run_inference(model, test_loader, device: str, tau: int) -> np.ndarray:
 
 def parse_args():
     p = argparse.ArgumentParser(description="PSTG-FAM 评估")
-    p.add_argument("--ckpt",     type=str, default=None)
-    p.add_argument("--data_dir", type=str, default=None)
-    p.add_argument("--device",   type=str, default=None)
-    p.add_argument("--output",   type=str, default=None)
-    p.add_argument("--no_plot",  action="store_true")
+    p.add_argument("--ckpt",      type=str,   default=None)
+    p.add_argument("--data_dir",  type=str,   default=None)
+    p.add_argument("--device",    type=str,   default=None)
+    p.add_argument("--output",    type=str,   default=None)
+    p.add_argument("--no_plot",   action="store_true")
+    p.add_argument("--method",    type=str,   default="pot",
+                   choices=["pot", "robust"])
+    p.add_argument("--pot_alpha", type=float, default=4e-3)
+    p.add_argument("--pot_q0",    type=float, default=0.98)
     return p.parse_args()
 
 
@@ -114,7 +118,7 @@ def main():
     anomaly_scores = detect_anomalies(
         x_true=x_true, x_pred=x_pred,
         smooth_window=cfg.smooth_window,
-        p_tfi=cfg.P_TFI, n_candidates=300,
+        method=args.method, pot_alpha=args.pot_alpha, pot_q0=args.pot_q0,
     )
     print(f"  平滑残差范围：[{raw_smoothed.min():.4f}, {raw_smoothed.max():.4f}]")
     print(f"  异常分数范围：[{anomaly_scores.min():.4f}, {anomaly_scores.max():.4f}]")

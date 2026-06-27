@@ -109,13 +109,17 @@ def dual_signal_scores(
 
 def parse_args():
     p = argparse.ArgumentParser(description="PSTG-MA 评估")
-    p.add_argument("--ckpt",      type=str, default=None)
-    p.add_argument("--data_dir",  type=str, default=None)
-    p.add_argument("--device",    type=str, default=None)
-    p.add_argument("--output",    type=str, default=None)
+    p.add_argument("--ckpt",      type=str,   default=None)
+    p.add_argument("--data_dir",  type=str,   default=None)
+    p.add_argument("--device",    type=str,   default=None)
+    p.add_argument("--output",    type=str,   default=None)
     p.add_argument("--alpha",     type=float, default=None,
                    help="预测残差权重（覆盖 checkpoint 中保存的值）")
     p.add_argument("--no_plot",   action="store_true")
+    p.add_argument("--method",    type=str,   default="pot",
+                   choices=["pot", "robust"])
+    p.add_argument("--pot_alpha", type=float, default=4e-3)
+    p.add_argument("--pot_q0",    type=float, default=0.98)
     return p.parse_args()
 
 
@@ -186,20 +190,20 @@ def main():
     print(f"  记忆引导残差范围：[{r_mem_s.min():.4f}, {r_mem_s.max():.4f}]  ← v2 与主残差同量级")
     print(f"  融合分数范围：    [{combined.min():.4f}, {combined.max():.4f}]")
 
-    # ── 评估（与 PSTG 一致：用改进版 Telemanom 检测双信号融合分数）────────
+    # ── 评估（POT 阈值作用于融合分数）─────────────────────────────────────
     print("\n=== 评估 ===")
     from utils.metrics import extract_events
-    from anomaly.detector import _find_optimal_threshold, _compute_anomaly_scores
+    from anomaly.detector import threshold_signal
 
-    # 对 combined 信号（已在 [0,1] 区间）直接应用改进版 Telemanom 阈值
-    r_combined = combined.astype(np.float64)
-    mu_c    = float(np.mean(r_combined))
-    sigma_c = float(np.std(r_combined))
-    eps_c   = _find_optimal_threshold(r_combined)
-    scores_c = _compute_anomaly_scores(r_combined, eps_c, mu_c, sigma_c, min_peak_z=1.5)
-    y_pred = (scores_c > 0).astype(np.int32)
+    scores_c  = threshold_signal(
+        combined.astype(np.float64),
+        method=args.method, pot_q0=args.pot_q0, pot_alpha=args.pot_alpha,
+    )
+    y_pred    = (scores_c > 0).astype(np.int32)
     pred_rate = float(y_pred.mean())
-    print(f"  combined 阈值: {eps_c:.4f}  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
+    # 用于绘图的可视化阈值（检测到的最低信号值）
+    eps_c     = float(combined[y_pred == 1].min()) if y_pred.any() else 0.0
+    print(f"  预测异常率：{pred_rate*100:.3f}%  真实异常率：{y_true.mean()*100:.3f}%")
 
     from utils.metrics import event_wise_metrics, affiliation_metrics
     ew = event_wise_metrics(y_true, y_pred)

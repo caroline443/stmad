@@ -43,7 +43,7 @@ def parse_args():
     p.add_argument("--no_plot",   action="store_true")
     p.add_argument("--method",    type=str,   default="pot",
                    choices=["pot", "robust"])
-    p.add_argument("--pot_alpha", type=float, default=1e-3)
+    p.add_argument("--pot_alpha", type=float, default=4e-3)
     p.add_argument("--pot_q0",    type=float, default=0.98)
     return p.parse_args()
 
