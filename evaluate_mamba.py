@@ -36,11 +36,15 @@ def run_inference(model, loader, device, tau):
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--ckpt",     type=str, default=None)
-    p.add_argument("--data_dir", type=str, default=None)
-    p.add_argument("--device",   type=str, default=None)
-    p.add_argument("--output",   type=str, default=None)
-    p.add_argument("--no_plot",  action="store_true")
+    p.add_argument("--ckpt",      type=str,   default=None)
+    p.add_argument("--data_dir",  type=str,   default=None)
+    p.add_argument("--device",    type=str,   default=None)
+    p.add_argument("--output",    type=str,   default=None)
+    p.add_argument("--no_plot",   action="store_true")
+    p.add_argument("--method",    type=str,   default="pot",
+                   choices=["pot", "robust"])
+    p.add_argument("--pot_alpha", type=float, default=1e-3)
+    p.add_argument("--pot_q0",    type=float, default=0.98)
     return p.parse_args()
 
 
@@ -91,7 +95,8 @@ def main():
     raw_smoothed  = smooth_residuals(raw_residuals, cfg.smooth_window).astype(np.float32)
     anomaly_scores = detect_anomalies(
         x_true=x_true, x_pred=x_pred,
-        smooth_window=cfg.smooth_window, p_tfi=cfg.P_TFI, n_candidates=300,
+        smooth_window=cfg.smooth_window,
+        method=args.method, pot_alpha=args.pot_alpha, pot_q0=args.pot_q0,
     )
 
     y_pred = (anomaly_scores > 0).astype(np.int32)

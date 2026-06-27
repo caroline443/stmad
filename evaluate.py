@@ -209,13 +209,21 @@ def plot_results(
 
 def parse_args():
     p = argparse.ArgumentParser(description="PSTG 推理与评估")
-    p.add_argument("--ckpt",     type=str, default=None,
+    p.add_argument("--ckpt",      type=str,   default=None,
                    help="Checkpoint 路径（默认 checkpoints/best.pt）")
-    p.add_argument("--data_dir", type=str, default=None)
-    p.add_argument("--device",   type=str, default=None)
-    p.add_argument("--output",   type=str, default=None,
+    p.add_argument("--data_dir",  type=str,   default=None)
+    p.add_argument("--device",    type=str,   default=None)
+    p.add_argument("--output",    type=str,   default=None,
                    help="评估结果根目录（默认 outputs/）")
-    p.add_argument("--no_plot",  action="store_true", help="跳过绘图")
+    p.add_argument("--no_plot",   action="store_true", help="跳过绘图")
+    # 阈值算法参数
+    p.add_argument("--method",    type=str,   default="pot",
+                   choices=["pot", "robust"],
+                   help="阈值算法：pot=极值理论(默认)，robust=鲁棒正态拟合")
+    p.add_argument("--pot_alpha", type=float, default=1e-3,
+                   help="POT 目标超阈率，越小阈值越高（默认 1e-3）")
+    p.add_argument("--pot_q0",    type=float, default=0.98,
+                   help="POT 初始截断分位数（默认 0.98）")
     return p.parse_args()
 
 
@@ -226,6 +234,10 @@ def main():
     if args.data_dir: cfg.DATA_DIR   = args.data_dir
     if args.device:   cfg.DEVICE     = args.device
     if args.output:   cfg.OUTPUT_DIR = args.output
+
+    method    = args.method
+    pot_alpha = args.pot_alpha
+    pot_q0    = args.pot_q0
 
     device = cfg.DEVICE if torch.cuda.is_available() else "cpu"
     print(f"使用设备：{device}")
@@ -285,7 +297,7 @@ def main():
     anomaly_scores = detect_anomalies(
         x_true=x_true, x_pred=x_pred,
         smooth_window=cfg.smooth_window,
-        p_tfi=cfg.P_TFI, n_candidates=50,
+        method=method, pot_alpha=pot_alpha, pot_q0=pot_q0,
     )
     print(f"  平滑残差范围：[{raw_smoothed.min():.4f}, {raw_smoothed.max():.4f}]")
     print(f"  异常分数范围：[{anomaly_scores.min():.4f}, {anomaly_scores.max():.4f}]")
@@ -355,6 +367,9 @@ def main():
         "eval_time":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "n_test_steps": T_pred,
         "anomaly_rate": float(y_true.mean()),
+        "threshold_method": method,
+        "pot_alpha":  pot_alpha,
+        "pot_q0":     pot_q0,
     }
 
     result_path = eval_mgr.save_results(metrics, info)
