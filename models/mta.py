@@ -330,7 +330,7 @@ class MTA(nn.Module):
         # [B, C, N, p_main] → patch 级平均误差 [B, C, N]
         patch_err = (recon - target).abs().mean(dim=-1)
         # max(channel) × max(patch)：捕捉最差通道最差时间 patch → [B]
-        score = patch_err.max(dim=1).values.max(dim=-1)
+        score = patch_err.max(dim=1).values.max(dim=-1).values
         return score
 
     # ──────────────────────────────────────────────────────────────────────────

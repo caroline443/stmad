@@ -116,7 +116,7 @@ def run_inference_mta(model, test_loader, device: str) -> np.ndarray:
 
         # 跨通道取 max，跨时间 patch 取 max → 单值异常分数 [B]
         # 改为 max×max：异常通常只在少数 patch 局部出现，mean 会稀释信号
-        score = patch_err.max(dim=1).values.max(dim=-1)
+        score = patch_err.max(dim=1).values.max(dim=-1).values
 
         all_scores.append(score.cpu().numpy())
 
