@@ -91,7 +91,7 @@ class EvalManager:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
-def run_inference_mta(model, test_loader, device: str) -> np.ndarray:
+def run_inference_mta(model, test_loader, device: str, last_k: int = 0) -> np.ndarray:
     """
     逐窗口推理，计算每个窗口的重建异常分数。
 
@@ -114,8 +114,12 @@ def run_inference_mta(model, test_loader, device: str) -> np.ndarray:
         # patch 级绝对误差：[B, C, N, p_main] → [B, C, N]
         patch_err = (recon - target).abs().mean(dim=-1)
 
+        # last_k > 0：只看最近 k 个 patch（提升时间局部性，改善 Affil）
+        # last_k = 0：看全部 patch（默认，Event F0.5 最优）
+        if last_k > 0:
+            patch_err = patch_err[:, :, -last_k:]   # [B, C, last_k]
+
         # 跨通道取 max，跨时间 patch 取 max → 单值异常分数 [B]
-        # 改为 max×max：异常通常只在少数 patch 局部出现，mean 会稀释信号
         score = patch_err.max(dim=1).values.max(dim=-1).values
 
         all_scores.append(score.cpu().numpy())
@@ -177,7 +181,9 @@ def parse_args():
     p.add_argument("--output",     type=str,   default=None)
     p.add_argument("--no_plot",      action="store_true")
     p.add_argument("--smooth_window", type=int, default=None,
-                   help="平滑窗口大小（默认 cfg.smooth_window=105）；减小可收窄检测区间，改善 Affil F0.5")
+                   help="平滑窗口大小（默认 cfg.smooth_window=105）")
+    p.add_argument("--last_k", type=int, default=0,
+                   help="只用最近 k 个 patch 计分（0=全部10个；1/2/3 可改善 Affil，更时间局部）")
     p.add_argument("--method",     type=str,   default="pot",
                    choices=["pot", "robust"])
     p.add_argument("--pot_alpha",  type=float, default=4e-3,
@@ -241,7 +247,7 @@ def main():
 
     # ── 推理（重建误差）────────────────────────────────────────────────────
     print("\n=== MTA 推理（重建模式，无掩码）===")
-    raw_scores = run_inference_mta(model, test_loader, device)
+    raw_scores = run_inference_mta(model, test_loader, device, last_k=args.last_k)
     T_windows  = len(raw_scores)
     print(f"窗口数（= 测试时间步数）：{T_windows:,}")
     print(f"原始重建误差范围：[{raw_scores.min():.4f}, {raw_scores.max():.4f}]")
