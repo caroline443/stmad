@@ -103,13 +103,17 @@ def run_inference_mta(model, test_loader, device: str, last_k: int = 0) -> np.nd
       - 索引 i 对应测试集时间步 L + i
     """
     model.eval()
-    all_scores = []
+    all_scores  = []
+    all_recon   = []   # 最后一个 patch 的重建值，用于通道对比图 [T, C]
 
     for context, _ in tqdm(test_loader, desc="  MTA 推理（重建模式）"):
         context = context.to(device, non_blocking=True)   # [B, C, L]
 
         # 推理模式：mask=None（不掩码，重建全部 patch）
         recon, _, target = model(context, mask=None)      # [B, C, N, p_main]
+
+        # 保存最后一个 patch 的重建均值，作为每时间步的"重建信号"[B, C]
+        all_recon.append(recon[:, :, -1, :].mean(dim=-1).cpu().numpy())
 
         # patch 级绝对误差：[B, C, N, p_main] → [B, C, N]
         patch_err = (recon - target).abs().mean(dim=-1)
@@ -124,7 +128,8 @@ def run_inference_mta(model, test_loader, device: str, last_k: int = 0) -> np.nd
 
         all_scores.append(score.cpu().numpy())
 
-    return np.concatenate(all_scores, axis=0).astype(np.float32)
+    x_recon = np.concatenate(all_recon, axis=0).astype(np.float32)  # [T, C]
+    return np.concatenate(all_scores, axis=0).astype(np.float32), x_recon
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +172,52 @@ def plot_results(y_true, raw_smoothed, anomaly_scores, threshold, eval_dir, max_
     fig.savefig(eval_dir / "anomaly_scores.png", dpi=150)
     plt.close(fig)
     print(f"  → {eval_dir}/anomaly_scores.png")
+
+
+def plot_channel_reconstruction(
+    y_true, x_true, x_recon, eval_dir, n_channels: int,
+    max_plot_len: int = 5000,
+):
+    """各通道：原始信号 vs MTA重建信号（对应 evaluate.py 的 channel_predictions.png）"""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.gridspec import GridSpec
+    except ImportError:
+        return
+
+    T  = min(len(x_true), max_plot_len)
+    t  = np.arange(T)
+    gt = y_true[:T].astype(bool)
+
+    def shade(ax, mask):
+        in_r = False
+        for i in range(len(mask)):
+            if mask[i] and not in_r:  s = i; in_r = True
+            elif not mask[i] and in_r:
+                ax.axvspan(s, i, alpha=0.2, color="green"); in_r = False
+        if in_r: ax.axvspan(s, len(mask), alpha=0.2, color="green")
+
+    fig = plt.figure(figsize=(16, 2.5 * n_channels))
+    gs  = GridSpec(n_channels, 1, figure=fig, hspace=0.4)
+    colors = plt.cm.tab10.colors
+
+    for c in range(n_channels):
+        ax = fig.add_subplot(gs[c])
+        ax.plot(t, x_true[:T, c],  color=colors[c % 10], lw=0.7, label="Original")
+        ax.plot(t, x_recon[:T, c], color="gray", lw=0.7, ls="--", alpha=0.8,
+                label="MTA Reconstruction")
+        shade(ax, gt)
+        ax.set_ylabel(f"Ch {c+41}"); ax.set_xlim(0, T)
+        if c == 0:
+            ax.legend(loc="upper right", fontsize=8)
+    ax.set_xlabel("Time Step")
+    fig.suptitle("MTA: Reconstruction vs. Original (all channels)", fontsize=12)
+    plt.tight_layout()
+    fig.savefig(eval_dir / "channel_reconstruction.png", dpi=150)
+    plt.close(fig)
+    print(f"  → {eval_dir}/channel_reconstruction.png")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,15 +295,17 @@ def main():
     data        = build_datasets(cfg)
     test_loader = data["test_loader"]
     test_labels = data["test_labels"]
+    test_data   = data["test_data"]
 
     # ── 推理（重建误差）────────────────────────────────────────────────────
     print("\n=== MTA 推理（重建模式，无掩码）===")
-    raw_scores = run_inference_mta(model, test_loader, device, last_k=args.last_k)
+    raw_scores, x_recon = run_inference_mta(model, test_loader, device, last_k=args.last_k)
     T_windows  = len(raw_scores)
     print(f"窗口数（= 测试时间步数）：{T_windows:,}")
     print(f"原始重建误差范围：[{raw_scores.min():.4f}, {raw_scores.max():.4f}]")
 
-    # 与 PSTG 评估对齐：取测试集中 [L, L+T_windows) 范围的标签
+    # 与 PSTG 评估对齐：取测试集中 [L, L+T_windows) 范围的数据和标签
+    x_true = test_data  [cfg.CONTEXT_LEN : cfg.CONTEXT_LEN + T_windows]   # [T, C]
     y_true = test_labels[cfg.CONTEXT_LEN : cfg.CONTEXT_LEN + T_windows].astype(np.int32)
     print(f"真实异常率：{y_true.mean()*100:.3f}%")
 
@@ -338,6 +391,10 @@ def main():
     if not args.no_plot:
         print("\n=== 绘图 ===")
         plot_results(y_true, raw_smoothed, anomaly_scores, threshold_val, eval_mgr.eval_dir)
+        plot_channel_reconstruction(
+            y_true=y_true, x_true=x_true, x_recon=x_recon,
+            eval_dir=eval_mgr.eval_dir, n_channels=cfg.NUM_CHANNELS,
+        )
 
     eval_mgr.finalize(metrics, info)
 
