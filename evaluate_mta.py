@@ -175,7 +175,9 @@ def parse_args():
     p.add_argument("--data_dir",   type=str,   default=None)
     p.add_argument("--device",     type=str,   default=None)
     p.add_argument("--output",     type=str,   default=None)
-    p.add_argument("--no_plot",    action="store_true")
+    p.add_argument("--no_plot",      action="store_true")
+    p.add_argument("--smooth_window", type=int, default=None,
+                   help="平滑窗口大小（默认 cfg.smooth_window=105）；减小可收窄检测区间，改善 Affil F0.5")
     p.add_argument("--method",     type=str,   default="pot",
                    choices=["pot", "robust"])
     p.add_argument("--pot_alpha",  type=float, default=4e-3,
@@ -190,9 +192,10 @@ def main():
     args = parse_args()
     cfg  = ConfigMTA()
 
-    if args.data_dir: cfg.DATA_DIR   = args.data_dir
-    if args.device:   cfg.DEVICE     = args.device
-    if args.output:   cfg.OUTPUT_DIR = args.output
+    if args.data_dir:     cfg.DATA_DIR   = args.data_dir
+    if args.device:       cfg.DEVICE     = args.device
+    if args.output:       cfg.OUTPUT_DIR = args.output
+    smooth_window = args.smooth_window if args.smooth_window else cfg.smooth_window
 
     device = cfg.DEVICE if torch.cuda.is_available() else "cpu"
     print(f"使用设备：{device}")
@@ -249,9 +252,9 @@ def main():
 
     # ── smooth + POT（与 PSTG 完全相同的后处理流程）───────────────────────
     print("\n=== 异常检测 ===")
-    raw_smoothed = smooth_residuals(raw_scores, cfg.smooth_window).astype(np.float32)
+    raw_smoothed = smooth_residuals(raw_scores, smooth_window).astype(np.float32)
 
-    print(f"  平滑窗口：{cfg.smooth_window}  方法：{args.method}")
+    print(f"  平滑窗口：{smooth_window}  方法：{args.method}")
     print(f"  平滑后范围：[{raw_smoothed.min():.4f}, {raw_smoothed.max():.4f}]")
 
     anomaly_scores = threshold_signal(
@@ -319,7 +322,7 @@ def main():
         "pot_alpha":    args.pot_alpha,
         "pot_q0":       args.pot_q0,
         "min_peak_z":   args.min_peak_z,
-        "smooth_window": cfg.smooth_window,
+        "smooth_window": smooth_window,
     }
     eval_mgr.save_results(metrics, info)
     eval_mgr.save_scores(anomaly_scores)
