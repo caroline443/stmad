@@ -114,12 +114,13 @@ def plot_paper_figure(
       上：2个通道原始信号，真实异常区绿色高亮
       下：MTA重建误差 + POT阈值线 + 真实异常区绿色高亮
     """
-    t   = np.arange(t0, t1)
-    seg = slice(t0, t1)
-    gt  = y_true[seg].astype(bool)
-    det = (anomaly_scores[seg] > 0).astype(bool)
-    scr = raw_smoothed[seg]
-    sig = x_true[seg]
+    t_abs = np.arange(t0, t1)
+    t     = t_abs - t0          # 相对时间（从 0 开始，去掉 1e6 科学计数）
+    seg   = slice(t0, t1)
+    gt    = y_true[seg].astype(bool)
+    det   = (anomaly_scores[seg] > 0).astype(bool)
+    scr   = raw_smoothed[seg]
+    sig   = x_true[seg]
 
     colors_ch = plt.cm.tab10.colors
 
@@ -172,7 +173,7 @@ def plot_paper_figure(
     ax_s.set_ylim(y_min, y_max)
 
     ax_s.set_xlim(t[0], t[-1])
-    ax_s.set_xlabel("Time Step", fontsize=9)
+    ax_s.set_xlabel(f"Relative Time Step  (offset: {t0:,})", fontsize=9)
     ax_s.set_ylabel("Recon. Error", fontsize=9, labelpad=2)
     ax_s.tick_params(labelsize=8)
     ax_s.spines["top"].set_visible(False)
