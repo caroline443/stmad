@@ -43,21 +43,54 @@ def extract_events(binary):
 def find_best_window(y_true, raw_smoothed, anomaly_scores,
                      half_win=1500, min_dur=5):
     """
-    找最适合展示的窗口：
-    - 包含至少一个真实异常（duration >= min_dur）
-    - 且该异常期间重建误差峰值最高（视觉效果最好）
+    找最适合论文展示的窗口，条件优先级：
+      1. 真正被 MTA 检出的事件（True Positive）
+      2. 事件两侧有足够的正常数据（对比明显）
+      3. 重建误差峰值高（视觉效果好）
+      4. 事件本身不能太长（否则整个窗口都是异常，失去对比）
     """
-    T = len(y_true)
-    events = [(s, e) for s, e in extract_events(y_true) if e - s + 1 >= min_dur]
-    if not events:
-        # 没有长事件，取误差最高点附近
+    T   = len(y_true)
+    det = (anomaly_scores > 0)
+
+    # ── 提取所有 GT 事件 ──────────────────────────────────────────────────────
+    gt_events = [(s, e) for s, e in extract_events(y_true)
+                 if e - s + 1 >= min_dur]
+
+    # ── 优先找 True Positive 事件 ────────────────────────────────────────────
+    candidates = []
+    for s, e in gt_events:
+        dur = e - s + 1
+        is_tp = det[s:e+1].any()          # MTA 在这段里检出过
+
+        # 窗口左右各留 half_win 步，计算正常数据比例
+        t0 = max(0, s - half_win)
+        t1 = min(T, e + half_win)
+        pre_anom_rate  = y_true[t0:s].mean()     if s > t0 else 1.0
+        post_anom_rate = y_true[e+1:t1].mean()   if t1 > e+1 else 1.0
+        has_context    = (pre_anom_rate < 0.3 and post_anom_rate < 0.3)
+
+        # 事件不要太长（超过窗口一半就没对比了）
+        not_too_long = dur < half_win
+
+        peak_score = float(raw_smoothed[s:e+1].max())
+
+        priority = (
+            int(is_tp) * 1000         # TP 优先
+            + int(has_context) * 100  # 有正常上下文次优
+            + int(not_too_long) * 10  # 事件不太长
+            + peak_score              # 峰值高
+        )
+        candidates.append((priority, s, e, t0, t1))
+
+    if not candidates:
         peak = int(np.argmax(raw_smoothed))
         return max(0, peak - half_win), min(T, peak + half_win)
 
-    # 按峰值误差排序，取最高的事件
-    scores = [raw_smoothed[s:e+1].max() for s, e in events]
-    best_idx = int(np.argmax(scores))
-    s, e = events[best_idx]
+    # 取优先级最高的候选
+    candidates.sort(reverse=True)
+    _, s, e, t0, t1 = candidates[0]
+
+    # 以事件中心对称
     center = (s + e) // 2
     t0 = max(0, center - half_win)
     t1 = min(T, center + half_win)
@@ -233,7 +266,16 @@ def main():
         t0, t1 = find_best_window(
             y_true, raw_smoothed, anomaly_scores, half_win=args.half_win
         )
-        print(f"自动选取窗口：[{t0}, {t1}]（含最显著异常事件）")
+        # 诊断输出
+        seg = slice(t0, t1)
+        gt_in_win  = y_true[seg].sum()
+        det_in_win = (anomaly_scores[seg] > 0).sum()
+        tp_in_win  = (y_true[seg].astype(bool) & (anomaly_scores[seg] > 0)).sum()
+        print(f"自动选取窗口：[{t0}, {t1}]  共 {t1-t0} 步")
+        print(f"  真实异常步数：{gt_in_win}  检出步数：{det_in_win}  "
+              f"True Positive：{tp_in_win}")
+        if gt_in_win == 0:
+            print("  ⚠ 该窗口无真实异常，建议用 --t0 --t1 手动指定")
 
     n_gt  = int(y_true[t0:t1].sum())
     n_det = int((anomaly_scores[t0:t1] > 0).sum())
