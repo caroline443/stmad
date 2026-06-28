@@ -104,93 +104,106 @@ def find_best_window(y_true, raw_smoothed, anomaly_scores,
 def plot_paper_figure(
     x_true, raw_smoothed, anomaly_scores, y_true,
     t0, t1, threshold,
-    n_channels=6, channels_to_show=(0, 2),   # 显示哪两个通道（索引）
+    n_channels=6, channels_to_show=(0, 2),
     output_dir=None,
     dpi=200,
+    show_detection=False,   # 关闭橙色检出区（避免大范围 FP 干扰叙事）
 ):
     """
-    双面板 publication-quality 图：
-      上：原始信号（选2个通道），真实异常区高亮
-      下：MTA异常分数，含阈值、检测区、真实区
+    Publication-quality 双面板图：
+      上：2个通道原始信号，真实异常区绿色高亮
+      下：MTA重建误差 + POT阈值线 + 真实异常区绿色高亮
     """
     t   = np.arange(t0, t1)
     seg = slice(t0, t1)
     gt  = y_true[seg].astype(bool)
     det = (anomaly_scores[seg] > 0).astype(bool)
     scr = raw_smoothed[seg]
-    sig = x_true[seg]             # [T_seg, C]
+    sig = x_true[seg]
 
     colors_ch = plt.cm.tab10.colors
 
     # ── 布局 ─────────────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(10, 5), dpi=dpi)
-    gs  = GridSpec(
-        3, 1, figure=fig,
-        height_ratios=[1, 1, 1.2],
-        hspace=0.08,
-    )
+    fig = plt.figure(figsize=(10, 4.5), dpi=dpi)
+    gs  = GridSpec(3, 1, figure=fig,
+                   height_ratios=[1, 1, 1.2], hspace=0.06)
     axes = [fig.add_subplot(gs[i]) for i in range(3)]
 
-    # ── 辅助：标注区域 ────────────────────────────────────────────────────────
+    # ── 辅助：标注真实异常区 ──────────────────────────────────────────────────
     def shade_gt(ax):
-        """绿色半透明：真实异常区"""
         for s, e in extract_events(gt):
-            ax.axvspan(t[s], t[e], color="#2ecc71", alpha=0.20, lw=0)
+            ax.axvspan(t[s], t[min(e, len(t)-1)],
+                       color="#e74c3c", alpha=0.18, lw=0, zorder=2)
 
     def shade_det(ax):
-        """橙色半透明：MTA 检出区（非 GT 区域为 FP）"""
         for s, e in extract_events(det):
-            ax.axvspan(t[s], t[e], color="#e67e22", alpha=0.18, lw=0)
+            ax.axvspan(t[s], t[min(e, len(t)-1)],
+                       color="#e67e22", alpha=0.15, lw=0, zorder=1)
 
-    # ── 上面板：通道信号 ───────────────────────────────────────────────────────
     ch_labels = [f"Ch {41 + c}" for c in range(n_channels)]
 
-    for row, ch in enumerate(channels_to_show[:2]):   # 最多画2个通道
+    # ── 上面板：通道信号 ───────────────────────────────────────────────────────
+    for row, ch in enumerate(channels_to_show[:2]):
         ax = axes[row]
-        ax.plot(t, sig[:, ch],
-                color=colors_ch[ch % 10], lw=0.8, zorder=3)
+        if show_detection:
+            shade_det(ax)
         shade_gt(ax)
-        shade_det(ax)
+        ax.plot(t, sig[:, ch], color=colors_ch[ch % 10], lw=0.75, zorder=3)
         ax.set_ylabel(ch_labels[ch], fontsize=9, labelpad=2)
         ax.set_xlim(t[0], t[-1])
         ax.tick_params(labelbottom=False, labelsize=8)
         ax.yaxis.set_major_locator(
             matplotlib.ticker.MaxNLocator(nbins=3, prune="both"))
-        # 去掉多余的 spines
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    # ── 下面板：异常分数 ───────────────────────────────────────────────────────
+    # ── 下面板：重建误差 + 阈值 ────────────────────────────────────────────────
     ax_s = axes[2]
+    if show_detection:
+        shade_det(ax_s)
     shade_gt(ax_s)
-    shade_det(ax_s)
-    ax_s.plot(t, scr, color="#2980b9", lw=0.9, zorder=3, label="Anomaly Score")
-    ax_s.axhline(threshold, color="#e74c3c", ls="--", lw=1.2,
-                 label=f"Threshold ({threshold:.3f})", zorder=4)
+
+    ax_s.plot(t, scr, color="#2980b9", lw=0.9, zorder=3)
+    ax_s.axhline(threshold, color="#c0392b", ls="--", lw=1.3, zorder=4)
+
+    # y 轴：下界留 0，上界取窗口内最大值的 1.15 倍
+    y_max = float(scr.max()) * 1.15
+    y_min = 0.0
+    ax_s.set_ylim(y_min, y_max)
+
     ax_s.set_xlim(t[0], t[-1])
     ax_s.set_xlabel("Time Step", fontsize=9)
-    ax_s.set_ylabel("Score", fontsize=9, labelpad=2)
+    ax_s.set_ylabel("Recon. Error", fontsize=9, labelpad=2)
     ax_s.tick_params(labelsize=8)
     ax_s.spines["top"].set_visible(False)
     ax_s.spines["right"].set_visible(False)
     ax_s.yaxis.set_major_locator(
-        matplotlib.ticker.MaxNLocator(nbins=3, prune="both"))
+        matplotlib.ticker.MaxNLocator(nbins=4, prune="both"))
+
+    # 阈值文字标注
+    ax_s.text(t[-1], threshold, f" ε*={threshold:.3f}",
+              va="center", ha="left", fontsize=7.5,
+              color="#c0392b", clip_on=False)
 
     # ── 图例 ──────────────────────────────────────────────────────────────────
-    legend_patches = [
-        mpatches.Patch(color="#2ecc71", alpha=0.5, label="Ground-Truth Anomaly"),
-        mpatches.Patch(color="#e67e22", alpha=0.5, label="MTA Detection"),
-        mpatches.Patch(color="#2980b9",             label="Anomaly Score"),
-        mpatches.Patch(color="#e74c3c",             label="POT Threshold"),
+    legend_items = [
+        mpatches.Patch(color="#e74c3c", alpha=0.4, label="Ground-Truth Anomaly"),
+        plt.Line2D([0], [0], color="#2980b9", lw=1.5,  label="Reconstruction Error"),
+        plt.Line2D([0], [0], color="#c0392b", lw=1.5,
+                   ls="--", label=f"POT Threshold"),
     ]
-    ax_s.legend(handles=legend_patches, fontsize=7.5,
+    if show_detection:
+        legend_items.insert(1, mpatches.Patch(
+            color="#e67e22", alpha=0.4, label="MTA Detection"))
+
+    ax_s.legend(handles=legend_items, fontsize=7.5,
                 loc="upper right", framealpha=0.85,
-                ncol=2, handlelength=1.2, columnspacing=0.8)
+                ncol=2, handlelength=1.5, columnspacing=0.8)
 
     # ── 标题 ──────────────────────────────────────────────────────────────────
     fig.suptitle(
         "MTA Anomaly Detection on ESA-AD Spacecraft Telemetry",
-        fontsize=10, y=0.98,
+        fontsize=10, y=0.99,
     )
 
     # ── 输出 ──────────────────────────────────────────────────────────────────
@@ -216,8 +229,10 @@ def parse_args():
                    help="eval 目录（默认 outputs_mta/latest）")
     p.add_argument("--channels",    type=int, nargs="+", default=[0, 2],
                    help="展示哪两个通道（0-index），默认 0 2（Ch41, Ch43）")
-    p.add_argument("--half_win",    type=int, default=1500,
-                   help="窗口半径（时间步数），默认 1500")
+    p.add_argument("--half_win",    type=int, default=500,
+                   help="窗口半径（时间步数），默认 500")
+    p.add_argument("--show_detection", action="store_true",
+                   help="显示橙色MTA检出区（默认关闭，避免大范围FP干扰）")
     p.add_argument("--t0",          type=int, default=None,
                    help="手动指定窗口起点（覆盖自动查找）")
     p.add_argument("--t1",          type=int, default=None,
@@ -285,15 +300,16 @@ def main():
     out_dir = args.out or str(eval_dir)
     print("\n生成 paper_figure.png / .pdf ...")
     plot_paper_figure(
-        x_true         = x_true,
-        raw_smoothed   = raw_smoothed,
-        anomaly_scores = anomaly_scores,
-        y_true         = y_true,
+        x_true           = x_true,
+        raw_smoothed     = raw_smoothed,
+        anomaly_scores   = anomaly_scores,
+        y_true           = y_true,
         t0=t0, t1=t1,
-        threshold      = threshold,
-        n_channels     = args.n_channels,
+        threshold        = threshold,
+        n_channels       = args.n_channels,
         channels_to_show = args.channels[:2],
-        output_dir     = out_dir,
+        output_dir       = out_dir,
+        show_detection   = args.show_detection,
     )
     print("\n完成！")
     print(f"  若窗口效果不理想，用 --t0 --t1 手动指定范围")
