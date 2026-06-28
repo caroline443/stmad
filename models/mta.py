@@ -329,8 +329,8 @@ class MTA(nn.Module):
         recon, _, target = self.forward(x, mask=None)
         # [B, C, N, p_main] → patch 级平均误差 [B, C, N]
         patch_err = (recon - target).abs().mean(dim=-1)
-        # 跨通道取 max，跨时间 patch 取 mean → [B]
-        score = patch_err.max(dim=1).values.mean(dim=-1)
+        # max(channel) × max(patch)：捕捉最差通道最差时间 patch → [B]
+        score = patch_err.max(dim=1).values.max(dim=-1)
         return score
 
     # ──────────────────────────────────────────────────────────────────────────
