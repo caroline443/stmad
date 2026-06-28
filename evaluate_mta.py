@@ -386,6 +386,9 @@ def main():
     eval_mgr.save_results(metrics, info)
     eval_mgr.save_scores(anomaly_scores)
     np.save(eval_mgr.eval_dir / "raw_smoothed.npy", raw_smoothed)
+    np.save(eval_mgr.eval_dir / "x_recon.npy",      x_recon)
+    np.save(eval_mgr.eval_dir / "x_true.npy",       x_true)
+    np.save(eval_mgr.eval_dir / "y_true.npy",       y_true)
 
     # ── 绘图 ────────────────────────────────────────────────────────────────
     if not args.no_plot:
