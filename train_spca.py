@@ -115,13 +115,15 @@ class CheckpointManager:
             "val_loss":      val_loss,
             "run_name":      self.run_name,
             "config": {
-                "patch_sizes":  cfg.PATCH_SIZES,
-                "d_model":      cfg.D_MODEL,
-                "num_heads":    cfg.NUM_HEADS,
-                "num_layers":   cfg.NUM_LAYERS,
-                "n_channels":   cfg.NUM_CHANNELS,
-                "context_len":  cfg.CONTEXT_LEN,
-                "forecast_len": cfg.FORECAST_LEN,
+                "n_channels":      cfg.NUM_CHANNELS,
+                "context_len":     cfg.CONTEXT_LEN,
+                "forecast_len":    cfg.FORECAST_LEN,
+                "d_model":         cfg.D_MODEL,
+                "n_heads":         cfg.NUM_HEADS,
+                "n_bands":         cfg.N_BANDS,
+                "band_splits":     cfg.BAND_SPLITS,
+                "n_layers_band":   cfg.N_LAYERS_BAND,
+                "n_layers_global": cfg.N_LAYERS_GLOBAL,
             },
         }
         if extra:
