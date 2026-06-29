@@ -82,24 +82,83 @@ class SpectralBandDecomposer(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  单频段编码器
+#  单频段编码器（带时序注意力）
 # ─────────────────────────────────────────────────────────────────────────────
 
-class BandProjection(nn.Module):
+class BandTemporalEncoder(nn.Module):
     """
-    对单频段信号做线性投影：[B, C, L] → [B, C, D]
+    对单频段信号做时序感知编码：[B, C, L] → [B, C, D]
 
-    实现：每个通道独立地把长度 L 的时序投影到 D 维嵌入。
+    改进点（相对于直接线性投影 Linear(L→D)）：
+      - 先把时序切成 n_patches 个 patch，每个 patch 独立投影到 D 维
+      - 加可学习位置编码，保留 patch 的时序顺序信息
+      - 对 n_patches 个 token 做时序自注意力（Temporal Self-Attention）
+      - 对所有 patch 的输出做均值池化，得到 [B, C, D]
+
+    这样模型能感知"频段信号在时间轴上哪段更重要"，
+    而不是把所有时间步等权叠加（Linear(L→D) 的局限）。
     """
 
-    def __init__(self, context_len: int, d_model: int):
+    def __init__(
+        self,
+        context_len: int,
+        d_model:     int,
+        n_patches:   int   = 10,
+        n_heads:     int   = 4,
+        dropout:     float = 0.1,
+    ):
         super().__init__()
-        self.proj = nn.Linear(context_len, d_model)
-        self.norm = nn.LayerNorm(d_model)
+        self.n_patches  = n_patches
+        self.patch_size = context_len // n_patches   # 250//10 = 25
+
+        # patch 投影：每个 patch_size 长的片段 → D
+        self.patch_proj = nn.Linear(self.patch_size, d_model)
+        # 可学习位置编码（每个 patch 一个）
+        self.pos_emb    = nn.Parameter(torch.zeros(1, n_patches, d_model))
+        nn.init.trunc_normal_(self.pos_emb, std=0.02)
+
+        # 时序自注意力（在 n_patches 个 token 之间）
+        self.temporal_attn = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_model * 2,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,          # Pre-LN，训练更稳定
+        )
+        self.out_norm = nn.LayerNorm(d_model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, C, L] → [B, C, D]"""
-        return self.norm(self.proj(x))
+        """
+        x: [B, C, L]
+        → 切 patch → 投影 → 时序注意力 → 均值池化
+        → [B, C, D]
+        """
+        B, C, L = x.shape
+        p = self.patch_size
+
+        # 截断确保整除（避免 L 不整除时越界）
+        x = x[:, :, : self.n_patches * p]                    # [B, C, N*p]
+
+        # 切 patch：[B, C, N, p]
+        x = x.reshape(B, C, self.n_patches, p)
+
+        # 投影：[B, C, N, D]
+        x = self.patch_proj(x)
+
+        # 加位置编码（广播到 B 和 C）
+        x = x + self.pos_emb.unsqueeze(0)                    # [B, C, N, D]
+
+        # 时序自注意力：需要把 B 和 C 合并为 batch 维
+        x = x.reshape(B * C, self.n_patches, -1)             # [B*C, N, D]
+        x = self.temporal_attn(x)                            # [B*C, N, D]
+
+        # 均值池化：[B*C, D]
+        x = x.mean(dim=1)
+
+        # 还原：[B, C, D]
+        x = self.out_norm(x.reshape(B, C, -1))
+        return x
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +282,7 @@ class SpCA(nn.Module):
         n_heads:         int   = 4,
         n_bands:         int   = 3,
         band_splits:     tuple = (0.1, 0.4),
+        n_patches:       int   = 10,    # 每频段切多少个 patch（时序编码用）
         n_layers_band:   int   = 1,
         n_layers_global: int   = 2,
         dropout:         float = 0.1,
@@ -240,9 +300,16 @@ class SpCA(nn.Module):
         )
 
         # ── 每频段独立分支 ────────────────────────────────────────────────────
-        # 线性投影
+        # 时序感知编码器（替代原来的简单线性投影）
         self.band_projs = nn.ModuleList([
-            BandProjection(context_len, d_model) for _ in range(n_bands)
+            BandTemporalEncoder(
+                context_len=context_len,
+                d_model=d_model,
+                n_patches=n_patches,
+                n_heads=n_heads,
+                dropout=dropout,
+            )
+            for _ in range(n_bands)
         ])
         # 跨通道注意力（每频段 n_layers_band 层）
         self.band_attns = nn.ModuleList([
@@ -313,6 +380,7 @@ class SpCA(nn.Module):
             n_heads         = cfg.NUM_HEADS,
             n_bands         = cfg.N_BANDS,
             band_splits     = cfg.BAND_SPLITS,
+            n_patches       = cfg.N_PATCHES,
             n_layers_band   = cfg.N_LAYERS_BAND,
             n_layers_global = cfg.N_LAYERS_GLOBAL,
             dropout         = cfg.P_DROPOUT,

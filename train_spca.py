@@ -122,6 +122,7 @@ class CheckpointManager:
                 "n_heads":         cfg.NUM_HEADS,
                 "n_bands":         cfg.N_BANDS,
                 "band_splits":     cfg.BAND_SPLITS,
+                "n_patches":       cfg.N_PATCHES,
                 "n_layers_band":   cfg.N_LAYERS_BAND,
                 "n_layers_global": cfg.N_LAYERS_GLOBAL,
             },
