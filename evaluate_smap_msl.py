@@ -170,21 +170,39 @@ def main():
     info = {
         "ckpt_path":  ckpt_path,
         "ckpt_epoch": ckpt.get("epoch", "?"),
-        "model_type": "PSTG",
+        "model_type": args.model.upper(),
         "dataset":    cfg.DATASET_NAME,
         "eval_time":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     eval_mgr.save_results(metrics, info)
-    np.save(eval_mgr.eval_dir / "anomaly_scores.npy",  anomaly_scores)
-    np.save(eval_mgr.eval_dir / "raw_smoothed.npy",    raw_smoothed)
-    eval_mgr.finalize(metrics, info)
+    np.save(eval_mgr.eval_dir / "anomaly_scores.npy", anomaly_scores)
+    np.save(eval_mgr.eval_dir / "raw_smoothed.npy",   raw_smoothed)
 
+    # SMAP/MSL 使用独立的 summary（不调用 ESA-AD 的 finalize，格式不同）
+    summary_path = eval_mgr.base_dir / "eval_summary.json"
+    history = json.loads(summary_path.read_text()) if summary_path.exists() else []
+    history.append({
+        "eval_name":    eval_mgr.eval_name,
+        "finished_at":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "model":        args.model,
+        "dataset":      cfg.DATASET_NAME,
+        "f1_no_pa":     m_nopa["f1"],
+        "f1_with_pa":   m_pa["f1"],
+        "f1_opt_pa":    m_opt_pa["f1"],
+        "precision_pa": m_pa["precision"],
+        "recall_pa":    m_pa["recall"],
+    })
+    summary_path.write_text(json.dumps(history, indent=2, ensure_ascii=False))
+
+    model_name = args.model.upper()
+    ds_name    = cfg.DATASET_NAME.upper()
     print(f"\n{'='*55}")
-    print(f"PSTG on {cfg.DATASET_NAME.upper()} 评估完成！")
-    print(f"  无  PA → F1 = {m_nopa['f1']:.4f}  (P={m_nopa['precision']:.4f}  R={m_nopa['recall']:.4f})")
-    print(f"  有  PA → F1 = {m_pa['f1']:.4f}  (P={m_pa['precision']:.4f}  R={m_pa['recall']:.4f})")
-    print(f"  最优无 PA → F1 = {m_opt['f1']:.4f}")
-    print(f"  最优有 PA → F1 = {m_opt_pa['f1']:.4f}")
+    print(f"{model_name} on {ds_name} 评估完成！结果目录：{eval_mgr.eval_dir}")
+    print(f"\n  === ContrastAD 标准（F1 with PA）===")
+    print(f"  有  PA → F1={m_pa['f1']:.4f}  P={m_pa['precision']:.4f}  R={m_pa['recall']:.4f}")
+    print(f"  最优PA → F1={m_opt_pa['f1']:.4f}  (阈值={best_thresh:.4f})")
+    print(f"\n  === 严格逐点（无 PA）===")
+    print(f"  无  PA → F1={m_nopa['f1']:.4f}  P={m_nopa['precision']:.4f}  R={m_nopa['recall']:.4f}")
     print(f"{'='*55}")
 
 

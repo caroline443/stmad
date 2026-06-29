@@ -224,6 +224,8 @@ def parse_args():
                         help="每隔多少轮永久保存一个 checkpoint（默认 10）")
     parser.add_argument("--resume",      type=str,   default=None,
                         help="从指定 checkpoint 续训，例如 ./checkpoints/run_xxx/epoch_030.pt")
+    parser.add_argument("--temporal",    action="store_true",
+                        help="启用时序注意力编码（v2，N_PATCHES=10）；默认用线性投影（v1）")
     return parser.parse_args()
 
 
@@ -296,6 +298,7 @@ def main():
     if args.lambda2:     cfg.LAMBDA2      = args.lambda2
     if args.device:      cfg.DEVICE       = args.device
     if args.train_stride: cfg.TRAIN_STRIDE = args.train_stride
+    if args.temporal:     cfg.N_PATCHES    = 10   # 启用 BandTemporalEncoder（v2）
 
     set_seed(cfg.SEED)
     device = cfg.DEVICE if torch.cuda.is_available() else "cpu"

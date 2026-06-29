@@ -15,7 +15,9 @@ class ConfigSpCA(Config):
     # ── 频段设计 ─────────────────────────────────────────────────────────────
     N_BANDS:      int   = 3              # 频段数（低/中/高）
     BAND_SPLITS:  tuple = (0.1, 0.4)    # 相对于 Nyquist 的分割点
-    N_PATCHES:    int   = 10            # 每频段时序编码的 patch 数
+    # N_PATCHES=0 → 用原版线性投影（v1，快）
+    # N_PATCHES>0 → 用时序注意力编码（v2，慢但保留时序结构）
+    N_PATCHES:    int   = 0
 
     # ── 模型结构（独立于 PSTG 参数）──────────────────────────────────────────
     D_MODEL:         int = 192           # 嵌入维度（PSTG: 512；SpCA无图故192已足够，参数量≈PSTG）

@@ -300,17 +300,24 @@ class SpCA(nn.Module):
         )
 
         # ── 每频段独立分支 ────────────────────────────────────────────────────
-        # 时序感知编码器（替代原来的简单线性投影）
-        self.band_projs = nn.ModuleList([
-            BandTemporalEncoder(
-                context_len=context_len,
-                d_model=d_model,
-                n_patches=n_patches,
-                n_heads=n_heads,
-                dropout=dropout,
-            )
-            for _ in range(n_bands)
-        ])
+        # use_temporal=True → BandTemporalEncoder（时序注意力，参数更多）
+        # use_temporal=False → BandProjection（简单线性，v1 原版，参数少）
+        self.use_temporal = n_patches > 0
+        if self.use_temporal:
+            self.band_projs = nn.ModuleList([
+                BandTemporalEncoder(
+                    context_len=context_len,
+                    d_model=d_model,
+                    n_patches=n_patches,
+                    n_heads=n_heads,
+                    dropout=dropout,
+                )
+                for _ in range(n_bands)
+            ])
+        else:
+            self.band_projs = nn.ModuleList([
+                BandProjection(context_len, d_model) for _ in range(n_bands)
+            ])
         # 跨通道注意力（每频段 n_layers_band 层）
         self.band_attns = nn.ModuleList([
             nn.ModuleList([
