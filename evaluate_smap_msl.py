@@ -131,7 +131,9 @@ def main():
     anomaly_scores = detect_anomalies(
         x_true=x_true, x_pred=x_pred,
         smooth_window=cfg.smooth_window,
-        p_tfi=cfg.P_TFI, n_candidates=300,
+        method="pot",
+        pot_alpha=args.pot_alpha,
+        min_peak_z=args.min_peak_z,
     )
     y_pred_bin = (anomaly_scores > 0).astype(np.int32)
     print(f"  残差范围：[{raw_smoothed.min():.4f}, {raw_smoothed.max():.4f}]")
