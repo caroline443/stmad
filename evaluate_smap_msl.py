@@ -89,6 +89,8 @@ def main():
             n_heads         = ckpt_cfg.get("n_heads",         spca_cfg.NUM_HEADS),
             n_bands         = ckpt_cfg.get("n_bands",         spca_cfg.N_BANDS),
             band_splits     = ckpt_cfg.get("band_splits",     spca_cfg.BAND_SPLITS),
+            # n_patches=0 → v1 BandProjection；checkpoint 未保存时默认 0（向后兼容）
+            n_patches       = ckpt_cfg.get("n_patches",       0),
             n_layers_band   = ckpt_cfg.get("n_layers_band",   spca_cfg.N_LAYERS_BAND),
             n_layers_global = ckpt_cfg.get("n_layers_global", spca_cfg.N_LAYERS_GLOBAL),
             dropout=0.0,
