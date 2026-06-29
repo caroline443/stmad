@@ -226,6 +226,15 @@ def parse_args():
                         help="从指定 checkpoint 续训，例如 ./checkpoints/run_xxx/epoch_030.pt")
     parser.add_argument("--temporal",    action="store_true",
                         help="启用时序注意力编码（v2，N_PATCHES=10）；默认用线性投影（v1）")
+    # 消融实验参数
+    parser.add_argument("--n_bands",     type=int,   default=None,
+                        help="频段数（默认 3）")
+    parser.add_argument("--band_splits", type=float, nargs="+", default=None,
+                        help="频段分割点，如 0.1 0.4（默认 0.1 0.4）")
+    parser.add_argument("--seed",        type=int,   default=None,
+                        help="随机种子（覆盖 Config.SEED）")
+    parser.add_argument("--ckpt_dir",    type=str,   default=None,
+                        help="checkpoint 输出目录（覆盖 cfg.CHECKPOINT_DIR）")
     return parser.parse_args()
 
 
@@ -298,7 +307,11 @@ def main():
     if args.lambda2:     cfg.LAMBDA2      = args.lambda2
     if args.device:      cfg.DEVICE       = args.device
     if args.train_stride: cfg.TRAIN_STRIDE = args.train_stride
-    if args.temporal:     cfg.N_PATCHES    = 10   # 启用 BandTemporalEncoder（v2）
+    if args.temporal:     cfg.N_PATCHES    = 10
+    if args.n_bands:      cfg.N_BANDS      = args.n_bands
+    if args.band_splits:  cfg.BAND_SPLITS  = tuple(args.band_splits)
+    if args.seed:         cfg.SEED         = args.seed
+    if args.ckpt_dir:     cfg.CHECKPOINT_DIR = args.ckpt_dir
 
     set_seed(cfg.SEED)
     device = cfg.DEVICE if torch.cuda.is_available() else "cpu"
