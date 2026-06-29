@@ -37,7 +37,7 @@ from tqdm import tqdm
 
 from config_spca import ConfigSpCA as Config
 from data.dataset import build_datasets
-from models.spca import SpCA as PSTG
+from models.spca import SpCA
 from utils.loss import PSTGLoss
 
 
