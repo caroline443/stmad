@@ -82,7 +82,23 @@ class SpectralBandDecomposer(nn.Module):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  单频段编码器（带时序注意力）
+#  单频段编码器 v1：简单线性投影（N_PATCHES=0 时使用）
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BandProjection(nn.Module):
+    """[B, C, L] → Linear(L→D) → [B, C, D]（v1 原版，快速基线）"""
+
+    def __init__(self, context_len: int, d_model: int):
+        super().__init__()
+        self.proj = nn.Linear(context_len, d_model)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.norm(self.proj(x))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  单频段编码器 v2：时序注意力（N_PATCHES>0 时使用）
 # ─────────────────────────────────────────────────────────────────────────────
 
 class BandTemporalEncoder(nn.Module):
