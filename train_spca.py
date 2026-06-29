@@ -122,9 +122,11 @@ class CheckpointManager:
                 "n_heads":         cfg.NUM_HEADS,
                 "n_bands":         cfg.N_BANDS,
                 "band_splits":     cfg.BAND_SPLITS,
-                "n_patches":       cfg.N_PATCHES,
-                "n_layers_band":   cfg.N_LAYERS_BAND,
-                "n_layers_global": cfg.N_LAYERS_GLOBAL,
+                "n_patches":         cfg.N_PATCHES,
+                "n_layers_band":     cfg.N_LAYERS_BAND,
+                "n_layers_global":   cfg.N_LAYERS_GLOBAL,
+                "use_spectral":      cfg.USE_SPECTRAL,
+                "use_channel_attn":  cfg.USE_CHANNEL_ATTN,
             },
         }
         if extra:
@@ -235,6 +237,11 @@ def parse_args():
                         help="随机种子（覆盖 Config.SEED）")
     parser.add_argument("--ckpt_dir",    type=str,   default=None,
                         help="checkpoint 输出目录（覆盖 cfg.CHECKPOINT_DIR）")
+    # 组件消融
+    parser.add_argument("--no_spectral",     action="store_true",
+                        help="消融：去掉频域分解（验证FFT的贡献）")
+    parser.add_argument("--no_channel_attn", action="store_true",
+                        help="消融：去掉跨通道注意力（验证通道建模的贡献）")
     return parser.parse_args()
 
 
@@ -308,10 +315,12 @@ def main():
     if args.device:      cfg.DEVICE       = args.device
     if args.train_stride: cfg.TRAIN_STRIDE = args.train_stride
     if args.temporal:     cfg.N_PATCHES    = 10
-    if args.n_bands:      cfg.N_BANDS      = args.n_bands
-    if args.band_splits:  cfg.BAND_SPLITS  = tuple(args.band_splits)
-    if args.seed:         cfg.SEED         = args.seed
-    if args.ckpt_dir:     cfg.CHECKPOINT_DIR = args.ckpt_dir
+    if args.n_bands:          cfg.N_BANDS          = args.n_bands
+    if args.band_splits:      cfg.BAND_SPLITS      = tuple(args.band_splits)
+    if args.seed:             cfg.SEED             = args.seed
+    if args.ckpt_dir:         cfg.CHECKPOINT_DIR   = args.ckpt_dir
+    if args.no_spectral:      cfg.USE_SPECTRAL     = False
+    if args.no_channel_attn:  cfg.USE_CHANNEL_ATTN = False
 
     set_seed(cfg.SEED)
     device = cfg.DEVICE if torch.cuda.is_available() else "cpu"

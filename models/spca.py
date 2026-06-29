@@ -291,70 +291,62 @@ class SpCA(nn.Module):
 
     def __init__(
         self,
-        n_channels:      int   = 6,
-        context_len:     int   = 250,
-        forecast_len:    int   = 10,
-        d_model:         int   = 256,
-        n_heads:         int   = 4,
-        n_bands:         int   = 3,
-        band_splits:     tuple = (0.1, 0.4),
-        n_patches:       int   = 10,    # 每频段切多少个 patch（时序编码用）
-        n_layers_band:   int   = 1,
-        n_layers_global: int   = 2,
-        dropout:         float = 0.1,
+        n_channels:       int   = 6,
+        context_len:      int   = 250,
+        forecast_len:     int   = 10,
+        d_model:          int   = 256,
+        n_heads:          int   = 4,
+        n_bands:          int   = 3,
+        band_splits:      tuple = (0.1, 0.4),
+        n_patches:        int   = 0,
+        n_layers_band:    int   = 1,
+        n_layers_global:  int   = 2,
+        dropout:          float = 0.1,
+        # ── 消融开关 ───────────────────────────────────────────────
+        use_spectral:     bool  = True,   # False → 去掉频域分解
+        use_channel_attn: bool  = True,   # False → 去掉跨通道注意力
     ):
         super().__init__()
-        self.n_channels  = n_channels
-        self.n_bands     = n_bands
-        self.context_len = context_len
+        self.n_channels       = n_channels
+        self.n_bands          = n_bands
+        self.context_len      = context_len
+        self.use_spectral     = use_spectral
+        self.use_channel_attn = use_channel_attn
 
-        # ── 频段分解 ─────────────────────────────────────────────────────────
-        self.decomposer = SpectralBandDecomposer(
-            context_len=context_len,
-            n_bands=n_bands,
-            band_splits=band_splits,
-        )
-
-        # ── 每频段独立分支 ────────────────────────────────────────────────────
-        # use_temporal=True → BandTemporalEncoder（时序注意力，参数更多）
-        # use_temporal=False → BandProjection（简单线性，v1 原版，参数少）
-        self.use_temporal = n_patches > 0
-        if self.use_temporal:
-            self.band_projs = nn.ModuleList([
-                BandTemporalEncoder(
-                    context_len=context_len,
-                    d_model=d_model,
-                    n_patches=n_patches,
-                    n_heads=n_heads,
-                    dropout=dropout,
-                )
-                for _ in range(n_bands)
-            ])
+        if use_spectral:
+            # ── 完整：FFT 频段分解 ──────────────────────────────────────────
+            self.decomposer = SpectralBandDecomposer(
+                context_len=context_len, n_bands=n_bands, band_splits=band_splits,
+            )
+            self.use_temporal = n_patches > 0
+            if self.use_temporal:
+                self.band_projs = nn.ModuleList([
+                    BandTemporalEncoder(context_len, d_model, n_patches, n_heads, dropout)
+                    for _ in range(n_bands)
+                ])
+            else:
+                self.band_projs = nn.ModuleList([
+                    BandProjection(context_len, d_model) for _ in range(n_bands)
+                ])
+            if use_channel_attn:
+                self.band_attns = nn.ModuleList([
+                    nn.ModuleList([CrossChannelAttention(d_model, n_heads, dropout)
+                                   for _ in range(n_layers_band)])
+                    for _ in range(n_bands)
+                ])
+            self.fusion = SpectralFusion(n_bands)
         else:
-            self.band_projs = nn.ModuleList([
-                BandProjection(context_len, d_model) for _ in range(n_bands)
-            ])
-        # 跨通道注意力（每频段 n_layers_band 层）
-        self.band_attns = nn.ModuleList([
-            nn.ModuleList([
+            # ── 消融：去掉频域分解，直接投影 ──────────────────────────────────
+            self.direct_proj = BandProjection(context_len, d_model)
+
+        # ── 全局跨通道注意力（若启用）──────────────────────────────────────────
+        if use_channel_attn:
+            self.global_attns = nn.ModuleList([
                 CrossChannelAttention(d_model, n_heads, dropout)
-                for _ in range(n_layers_band)
+                for _ in range(n_layers_global)
             ])
-            for _ in range(n_bands)
-        ])
 
-        # ── 频段融合 ──────────────────────────────────────────────────────────
-        self.fusion = SpectralFusion(n_bands)
-
-        # ── 全局精炼（融合后跨通道注意力） ─────────────────────────────────────
-        self.global_attns = nn.ModuleList([
-            CrossChannelAttention(d_model, n_heads, dropout)
-            for _ in range(n_layers_global)
-        ])
-
-        # ── 预测头 ────────────────────────────────────────────────────────────
         self.forecast_head = ForecastHead(d_model, forecast_len)
-
         self._init_weights()
 
     def _init_weights(self):
@@ -365,48 +357,46 @@ class SpCA(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: [B, C, L]  输入时序（已归一化）
-        Returns:
-            x_hat: [B, C, F]  预测的未来 F 步
-        """
-        # 1. 频段分解
-        bands = self.decomposer(x)           # List of n_bands × [B, C, L]
+        """x: [B, C, L] → x_hat: [B, C, F]"""
 
-        # 2. 每频段独立处理
-        band_feats = []
-        for k in range(self.n_bands):
-            z = self.band_projs[k](bands[k])  # [B, C, D]
-            for attn in self.band_attns[k]:
-                z = attn(z)                   # [B, C, D]
-            band_feats.append(z)
+        if self.use_spectral:
+            # ── 完整路径：FFT 分解 → 频段注意力 → 融合 ────────────────────────
+            bands = self.decomposer(x)                    # List[B, C, L]
+            band_feats = []
+            for k in range(self.n_bands):
+                z = self.band_projs[k](bands[k])          # [B, C, D]
+                if self.use_channel_attn:
+                    for attn in self.band_attns[k]:
+                        z = attn(z)
+                band_feats.append(z)
+            z = self.fusion(band_feats)                   # [B, C, D]
+        else:
+            # ── 消融：跳过频域，直接线性投影 ──────────────────────────────────
+            z = self.direct_proj(x)                       # [B, C, D]
 
-        # 3. 频段融合
-        z = self.fusion(band_feats)           # [B, C, D]
+        # 全局跨通道精炼（若启用）
+        if self.use_channel_attn:
+            for attn in self.global_attns:
+                z = attn(z)
 
-        # 4. 全局跨通道精炼
-        for attn in self.global_attns:
-            z = attn(z)                       # [B, C, D]
-
-        # 5. 预测
-        x_hat = self.forecast_head(z)         # [B, C, F]
-        return x_hat
+        return self.forecast_head(z)                      # [B, C, F]
 
     @classmethod
     def from_config(cls, cfg):
         return cls(
-            n_channels      = cfg.NUM_CHANNELS,
-            context_len     = cfg.CONTEXT_LEN,
-            forecast_len    = cfg.FORECAST_LEN,
-            d_model         = cfg.D_MODEL,
-            n_heads         = cfg.NUM_HEADS,
-            n_bands         = cfg.N_BANDS,
-            band_splits     = cfg.BAND_SPLITS,
-            n_patches       = cfg.N_PATCHES,
-            n_layers_band   = cfg.N_LAYERS_BAND,
-            n_layers_global = cfg.N_LAYERS_GLOBAL,
-            dropout         = cfg.P_DROPOUT,
+            n_channels        = cfg.NUM_CHANNELS,
+            context_len       = cfg.CONTEXT_LEN,
+            forecast_len      = cfg.FORECAST_LEN,
+            d_model           = cfg.D_MODEL,
+            n_heads           = cfg.NUM_HEADS,
+            n_bands           = cfg.N_BANDS,
+            band_splits       = cfg.BAND_SPLITS,
+            n_patches         = cfg.N_PATCHES,
+            n_layers_band     = cfg.N_LAYERS_BAND,
+            n_layers_global   = cfg.N_LAYERS_GLOBAL,
+            dropout           = cfg.P_DROPOUT,
+            use_spectral      = cfg.USE_SPECTRAL,
+            use_channel_attn  = cfg.USE_CHANNEL_ATTN,
         )
 
     def count_parameters(self) -> int:

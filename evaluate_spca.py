@@ -266,9 +266,11 @@ def main():
         n_heads         = ckpt_cfg.get("n_heads",         cfg.NUM_HEADS),
         n_bands         = ckpt_cfg.get("n_bands",         cfg.N_BANDS),
         band_splits     = ckpt_cfg.get("band_splits",     cfg.BAND_SPLITS),
-        n_patches       = ckpt_cfg.get("n_patches",       0),  # 默认 0 = v1，向后兼容
-        n_layers_band   = ckpt_cfg.get("n_layers_band",   cfg.N_LAYERS_BAND),
-        n_layers_global = ckpt_cfg.get("n_layers_global", cfg.N_LAYERS_GLOBAL),
+        n_patches         = ckpt_cfg.get("n_patches",         0),
+        n_layers_band     = ckpt_cfg.get("n_layers_band",     cfg.N_LAYERS_BAND),
+        n_layers_global   = ckpt_cfg.get("n_layers_global",   cfg.N_LAYERS_GLOBAL),
+        use_spectral      = ckpt_cfg.get("use_spectral",      True),
+        use_channel_attn  = ckpt_cfg.get("use_channel_attn",  True),
         dropout         = 0.0,
     ).to(device)
 

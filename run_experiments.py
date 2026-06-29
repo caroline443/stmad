@@ -38,12 +38,16 @@ import torch
 
 ABLATIONS = [
     # (实验名, ckpt_dir 后缀, train_spca.py 额外参数)
-    ("N_BANDS=2",               "ab_bands2",   ["--n_bands", "2", "--band_splits", "0.4"]),
-    ("N_BANDS=3 (default)",     "ab_bands3",   []),
-    ("N_BANDS=4",               "ab_bands4",   ["--n_bands", "4", "--band_splits", "0.1", "0.4", "0.6"]),
-    ("splits=(0.05,0.2)",       "ab_split_lo", ["--band_splits", "0.05", "0.2"]),
-    ("splits=(0.2,0.5)",        "ab_split_hi", ["--band_splits", "0.2",  "0.5"]),
-    ("v2 temporal attention",   "ab_v2",       ["--temporal"]),
+    # ── P0：核心组件消融（审稿人要求）────────────────────────────────────────
+    ("SpCA Full",               "ab_full",      []),
+    ("w/o Spectral Decomp",     "ab_no_spec",   ["--no_spectral"]),
+    ("w/o Channel Attention",   "ab_no_cattn",  ["--no_channel_attn"]),
+    ("w/o Both (baseline)",     "ab_no_both",   ["--no_spectral", "--no_channel_attn"]),
+    # ── 超参敏感性 ────────────────────────────────────────────────────────────
+    ("N_BANDS=2",               "ab_bands2",    ["--n_bands", "2", "--band_splits", "0.4"]),
+    ("N_BANDS=4",               "ab_bands4",    ["--n_bands", "4", "--band_splits", "0.1", "0.4", "0.6"]),
+    ("splits=(0.05,0.2)",       "ab_split_lo",  ["--band_splits", "0.05", "0.2"]),
+    ("splits=(0.2,0.5)",        "ab_split_hi",  ["--band_splits", "0.2",  "0.5"]),
 ]
 
 SEEDS = [42, 123, 456]
