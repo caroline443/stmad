@@ -23,6 +23,7 @@ from tqdm import tqdm
 from config_smap_msl import ConfigSMAP, ConfigMSL
 from data.smap_msl_dataset import build_datasets_smap_msl, point_adjust, compute_f1
 from models.pstg import PSTG
+from models.spca import SpCA
 from anomaly.detector import detect_anomalies, smooth_residuals
 from utils.metrics import find_best_threshold
 from evaluate import EvalManager
@@ -48,6 +49,10 @@ def parse_args():
     p.add_argument("--device",   type=str, default=None)
     p.add_argument("--output",   type=str, default=None)
     p.add_argument("--no_plot",  action="store_true")
+    p.add_argument("--model",    type=str, default="pstg",
+                   choices=["pstg", "spca"], help="使用哪个模型（默认 pstg）")
+    p.add_argument("--pot_alpha",  type=float, default=4e-3)
+    p.add_argument("--min_peak_z", type=float, default=1.5)
     return p.parse_args()
 
 
@@ -73,16 +78,32 @@ def main():
     ckpt     = torch.load(ckpt_path, map_location=device)
     ckpt_cfg = ckpt.get("config", {})
 
-    model = PSTG(
-        patch_sizes=  ckpt_cfg.get("patch_sizes",  cfg.PATCH_SIZES),
-        d_model=      ckpt_cfg.get("d_model",       cfg.D_MODEL),
-        num_heads=    ckpt_cfg.get("num_heads",     cfg.NUM_HEADS),
-        num_layers=   ckpt_cfg.get("num_layers",    cfg.NUM_LAYERS),
-        n_channels=   ckpt_cfg.get("n_channels",    cfg.NUM_CHANNELS),
-        context_len=  ckpt_cfg.get("context_len",   cfg.CONTEXT_LEN),
-        forecast_len= ckpt_cfg.get("forecast_len",  cfg.FORECAST_LEN),
-        top_k=cfg.top_k, dropout=0.0,
-    ).to(device)
+    if args.model == "spca":
+        from config_spca import ConfigSpCA
+        spca_cfg = ConfigSpCA()
+        model = SpCA(
+            n_channels      = ckpt_cfg.get("n_channels",      cfg.NUM_CHANNELS),
+            context_len     = ckpt_cfg.get("context_len",     cfg.CONTEXT_LEN),
+            forecast_len    = ckpt_cfg.get("forecast_len",    cfg.FORECAST_LEN),
+            d_model         = ckpt_cfg.get("d_model",         spca_cfg.D_MODEL),
+            n_heads         = ckpt_cfg.get("n_heads",         spca_cfg.NUM_HEADS),
+            n_bands         = ckpt_cfg.get("n_bands",         spca_cfg.N_BANDS),
+            band_splits     = ckpt_cfg.get("band_splits",     spca_cfg.BAND_SPLITS),
+            n_layers_band   = ckpt_cfg.get("n_layers_band",   spca_cfg.N_LAYERS_BAND),
+            n_layers_global = ckpt_cfg.get("n_layers_global", spca_cfg.N_LAYERS_GLOBAL),
+            dropout=0.0,
+        ).to(device)
+    else:
+        model = PSTG(
+            patch_sizes=  ckpt_cfg.get("patch_sizes",  cfg.PATCH_SIZES),
+            d_model=      ckpt_cfg.get("d_model",       cfg.D_MODEL),
+            num_heads=    ckpt_cfg.get("num_heads",     cfg.NUM_HEADS),
+            num_layers=   ckpt_cfg.get("num_layers",    cfg.NUM_LAYERS),
+            n_channels=   ckpt_cfg.get("n_channels",    cfg.NUM_CHANNELS),
+            context_len=  ckpt_cfg.get("context_len",   cfg.CONTEXT_LEN),
+            forecast_len= ckpt_cfg.get("forecast_len",  cfg.FORECAST_LEN),
+            top_k=cfg.top_k, dropout=0.0,
+        ).to(device)
 
     model.load_state_dict(ckpt["model"])
     model.eval()
