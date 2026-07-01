@@ -16,17 +16,17 @@
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 <style>
   :root {
-    --bg: #0f1117;
-    --card: #1a1d29;
-    --card-light: #232735;
-    --text: #e4e6eb;
-    --text-dim: #9ca3af;
-    --accent: #60a5fa;
-    --accent-2: #c084fc;
-    --green: #4ade80;
-    --orange: #fb923c;
-    --red: #f87171;
-    --border: #2d3142;
+    --bg: #f8f9fb;
+    --card: #ffffff;
+    --card-light: #f1f3f8;
+    --text: #1f2937;
+    --text-dim: #6b7280;
+    --accent: #2563eb;
+    --accent-2: #7c3aed;
+    --green: #059669;
+    --orange: #ea580c;
+    --red: #dc2626;
+    --border: #e0e4ea;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -39,7 +39,7 @@
 
   /* ---- Hero ---- */
   .hero {
-    background: linear-gradient(135deg, #1e3a5f 0%, #1a1d29 60%, #2d1b4e 100%);
+    background: linear-gradient(135deg, #dbeafe 0%, #ede9fe 50%, #fce7f3 100%);
     padding: 80px 40px 60px;
     text-align: center;
     border-bottom: 1px solid var(--border);
@@ -48,19 +48,17 @@
     font-size: 2.6em;
     font-weight: 700;
     margin-bottom: 12px;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: #1e3a5f;
   }
-  .hero .subtitle { font-size: 1.15em; color: var(--text-dim); }
+  .hero .subtitle { font-size: 1.15em; color: #4b5563; }
   .hero .badges {
     margin-top: 20px;
     display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
   }
   .badge {
-    background: rgba(96,165,250,0.12);
-    border: 1px solid rgba(96,165,250,0.3);
-    color: var(--accent);
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    color: #2563eb;
     padding: 5px 16px;
     border-radius: 20px;
     font-size: 0.85em;
@@ -106,21 +104,21 @@
     margin: 20px 0;
   }
   .card-tip {
-    background: rgba(74,222,128,0.07);
+    background: #ecfdf5;
     border-left: 4px solid var(--green);
     border-radius: 0 8px 8px 0;
     padding: 16px 20px;
     margin: 16px 0;
   }
   .card-warn {
-    background: rgba(251,146,60,0.07);
+    background: #fff7ed;
     border-left: 4px solid var(--orange);
     border-radius: 0 8px 8px 0;
     padding: 16px 20px;
     margin: 16px 0;
   }
   .card-info {
-    background: rgba(96,165,250,0.07);
+    background: #eff6ff;
     border-left: 4px solid var(--accent);
     border-radius: 0 8px 8px 0;
     padding: 16px 20px;
@@ -161,9 +159,9 @@
     color: var(--accent);
     font-weight: 600;
   }
-  tr:hover { background: rgba(96,165,250,0.05); }
+  tr:hover { background: #f0f7ff; }
   .best { color: var(--green); font-weight: 700; }
-  .ours { background: rgba(96,165,250,0.08); }
+  .ours { background: #eff6ff; }
 
   /* ---- Pipeline ---- */
   .pipeline {
@@ -209,15 +207,15 @@
   }
   .flow-box-accent {
     border-color: var(--accent);
-    background: rgba(96,165,250,0.1);
+    background: #dbeafe;
   }
   .flow-box-green {
     border-color: var(--green);
-    background: rgba(74,222,128,0.1);
+    background: #d1fae5;
   }
   .flow-box-purple {
     border-color: var(--accent-2);
-    background: rgba(192,132,252,0.1);
+    background: #ede9fe;
   }
   .flow-down { color: var(--text-dim); font-size: 1.5em; text-align: center; }
 
@@ -229,12 +227,12 @@
     font-size: 0.8em;
     margin-right: 6px;
   }
-  .tag-low { background: rgba(74,222,128,0.15); color: var(--green); }
-  .tag-mid { background: rgba(96,165,250,0.15); color: var(--accent); }
-  .tag-high { background: rgba(248,113,113,0.15); color: var(--red); }
+  .tag-low { background: #d1fae5; color: var(--green); }
+  .tag-mid { background: #dbeafe; color: var(--accent); }
+  .tag-high { background: #fee2e2; color: var(--red); }
 
   .dim { color: var(--text-dim); font-size: 0.9em; }
-  .highlight { background: rgba(251,146,60,0.15); padding: 1px 5px; border-radius: 3px; }
+  .highlight { background: #fef3c7; padding: 1px 5px; border-radius: 3px; }
 
   ul, ol { margin-left: 24px; margin-bottom: 14px; }
   li { margin-bottom: 6px; }
@@ -564,8 +562,8 @@ $$\text{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\!\left(\frac{
 <p>注意力之后接标准的后处理：</p>
 
 <div class="formula-box">
-$$\mathbf{z}'^{(k)} = \text{LN}(\mathbf{z}^{(k)} + \text{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}))} \quad \text{(残差连接 + LayerNorm)}$$
-$$\mathbf{z}''^{(k)} = \text{LN}(\mathbf{z}'^{(k)} + \text{FFN}(\mathbf{z}'^{(k)}))} \quad \text{(FFN + 残差 + LayerNorm)}$$
+$$\mathbf{z}'^{(k)} = \text{LN}\!\left(\mathbf{z}^{(k)} + \text{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V})\right) \quad \text{(残差连接 + LayerNorm)}$$
+$$\mathbf{z}''^{(k)} = \text{LN}\!\left(\mathbf{z}'^{(k)} + \text{FFN}(\mathbf{z}'^{(k)})\right) \quad \text{(FFN + 残差 + LayerNorm)}$$
 </div>
 
 <p>其中 FFN（Feed-Forward Network）是两层全连接：</p>
