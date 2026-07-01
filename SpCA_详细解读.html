@@ -248,6 +248,75 @@
   .toc a { color: var(--accent); text-decoration: none; }
   .toc a:hover { text-decoration: underline; }
 
+    /* ---- Visualizers ---- */
+  .viz-section {
+    background: #f8f9fb;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 28px 0;
+  }
+  .viz-title {
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .viz-title::before {
+    content: "";
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .viz-canvas-wrap {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .viz-canvas-label {
+    font-size: 0.78em;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    font-weight: 500;
+  }
+  canvas { display: block; width: 100%; border-radius: 4px; }
+  .viz-controls {
+    display: flex; gap: 20px; flex-wrap: wrap; margin-top: 12px;
+  }
+  .viz-slider { flex: 1; min-width: 180px; }
+  .viz-slider label {
+    display: flex; justify-content: space-between;
+    font-size: 0.85em; color: var(--text-dim); margin-bottom: 4px;
+  }
+  .viz-slider label .value { color: var(--accent); font-weight: 600; font-family: monospace; }
+  .viz-slider input[type="range"] {
+    width: 100%; height: 6px; border-radius: 3px;
+    background: #e0e4ea; outline: none;
+    -webkit-appearance: none; appearance: none;
+  }
+  .viz-slider input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
+    border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .viz-slider input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+    border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .viz-info {
+    font-size: 0.83em; color: var(--text-dim);
+    margin-top: 10px; padding: 8px 12px;
+    background: #f1f3f8; border-radius: 6px;
+  }
+
   footer {
     text-align: center;
     padding: 30px;
@@ -448,6 +517,66 @@ $$\text{IDFT:} \quad x_n = \frac{1}{L} \sum_{k=0}^{L-1} X_k \, e^{i \frac{2\pi k
 <h3>6.4 为什么跟异常检测有关</h3>
 
 <p>正常情况下，航天器遥测在各个频段的能量分布是稳定的——低频有轨道周期，中频有热循环，高频有仪器噪声。当异常发生时（比如设备故障、传感器漂移），某些频段的能量分布会发生变化——可能高频突然出现尖峰，或者低频趋势偏离。所以<strong>在频域上分解后分别观察</strong>，比在时域上看整体波形更容易发现异常。</p>
+
+<div class="viz-section">
+<div class="viz-title">交互式可视化：傅里叶变换——从时域到频域</div>
+<p class="dim" style="margin-bottom:12px">下方模拟了一段航天器遥测信号。你可以调整 3 个正弦波分量的<strong>频率</strong>、<strong>振幅</strong>和<strong>相位</strong>，实时观察时域波形和频域频谱如何变化。尝试改变参数，理解傅里叶变换“把波形拆成频率”的含义。</p>
+
+<div class="viz-canvas-wrap">
+<div class="viz-canvas-label">时域波形（3 个分量叠加 = 合成信号）</div>
+<canvas id="viz-fft-time" style="height:160px"></canvas>
+</div>
+
+<div class="viz-canvas-wrap">
+<div class="viz-canvas-label">频域频谱（振幅 vs 频率）</div>
+<canvas id="viz-fft-freq" style="height:140px"></canvas>
+</div>
+
+<div class="viz-controls">
+<div class="viz-slider">
+<label>分量1 频率 <span class="value" id="fft-f1">2</span></label>
+<input type="range" id="fft-freq1" min="1" max="20" step="1" value="2">
+</div>
+<div class="viz-slider">
+<label>分量1 振幅 <span class="value" id="fft-a1">2.0</span></label>
+<input type="range" id="fft-amp1" min="0" max="3" step="0.1" value="2.0">
+</div>
+<div class="viz-slider">
+<label>分量1 相位 <span class="value" id="fft-p1">0.0</span></label>
+<input type="range" id="fft-phase1" min="0" max="6.28" step="0.1" value="0">
+</div>
+</div>
+<div class="viz-controls">
+<div class="viz-slider">
+<label>分量2 频率 <span class="value" id="fft-f2">8</span></label>
+<input type="range" id="fft-freq2" min="1" max="20" step="1" value="8">
+</div>
+<div class="viz-slider">
+<label>分量2 振幅 <span class="value" id="fft-a2">0.8</span></label>
+<input type="range" id="fft-amp2" min="0" max="3" step="0.1" value="0.8">
+</div>
+<div class="viz-slider">
+<label>分量2 相位 <span class="value" id="fft-p2">0.0</span></label>
+<input type="range" id="fft-phase2" min="0" max="6.28" step="0.1" value="0">
+</div>
+</div>
+<div class="viz-controls">
+<div class="viz-slider">
+<label>分量3 频率 <span class="value" id="fft-f3">15</span></label>
+<input type="range" id="fft-freq3" min="1" max="20" step="1" value="15">
+</div>
+<div class="viz-slider">
+<label>分量3 振幅 <span class="value" id="fft-a3">0.4</span></label>
+<input type="range" id="fft-amp3" min="0" max="3" step="0.1" value="0.4">
+</div>
+<div class="viz-slider">
+<label>噪声强度 <span class="value" id="fft-noise">0.2</span></label>
+<input type="range" id="fft-noise-level" min="0" max="1" step="0.05" value="0.2">
+</div>
+</div>
+
+<div class="viz-info" id="fft-info"></div>
+</div>
 </section>
 
 <!-- ===== STEP 1 ===== -->
@@ -927,5 +1056,178 @@ $$z = q_0 + \frac{\hat{\sigma}}{\hat{\xi}} \left[ \left(\frac{\alpha}{N_q}\right
 </footer>
 
 </div>
+<script>
+// === FFT Visualizer ===
+(function() {
+  const L = 256;
+  let rs = 42;
+  function rng() { rs = (rs * 1103515245 + 12345) & 0x7fffffff; return rs / 0x7fffffff; }
+
+  function setupCanvas(canvas, h) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth || (canvas.parentElement.clientWidth - 20);
+    canvas.width = Math.max(w, 100) * dpr;
+    canvas.height = h * dpr;
+    canvas.style.height = h + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w: Math.max(w, 100), h };
+  }
+
+  function update() {
+    const f1 = parseInt(document.getElementById('fft-freq1').value);
+    const a1 = parseFloat(document.getElementById('fft-amp1').value);
+    const p1 = parseFloat(document.getElementById('fft-phase1').value);
+    const f2 = parseInt(document.getElementById('fft-freq2').value);
+    const a2 = parseFloat(document.getElementById('fft-amp2').value);
+    const p2 = parseFloat(document.getElementById('fft-phase2').value);
+    const f3 = parseInt(document.getElementById('fft-freq3').value);
+    const a3 = parseFloat(document.getElementById('fft-amp3').value);
+    const noise = parseFloat(document.getElementById('fft-noise-level').value);
+
+    document.getElementById('fft-f1').textContent = f1;
+    document.getElementById('fft-a1').textContent = a1.toFixed(1);
+    document.getElementById('fft-p1').textContent = p1.toFixed(1);
+    document.getElementById('fft-f2').textContent = f2;
+    document.getElementById('fft-a2').textContent = a2.toFixed(1);
+    document.getElementById('fft-p2').textContent = p2.toFixed(1);
+    document.getElementById('fft-f3').textContent = f3;
+    document.getElementById('fft-a3').textContent = a3.toFixed(1);
+    document.getElementById('fft-noise').textContent = noise.toFixed(2);
+
+    // Generate signal
+    rs = 42;
+    const signal = [];
+    for (let i = 0; i < L; i++) {
+      const t = i / L;
+      signal.push(
+        a1 * Math.sin(2*Math.PI*f1*t + p1) +
+        a2 * Math.sin(2*Math.PI*f2*t + p2) +
+        a3 * Math.sin(2*Math.PI*f3*t) +
+        noise * (rng() - 0.5) * 2
+      );
+    }
+
+    // --- Draw time domain ---
+    const cTime = setupCanvas(document.getElementById('viz-fft-time'), 160);
+    const ctx1 = cTime.ctx, w1 = cTime.w, h1 = cTime.h;
+    ctx1.clearRect(0, 0, w1, h1);
+    // grid
+    ctx1.strokeStyle = '#eef0f4'; ctx1.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (i/4)*h1;
+      ctx1.beginPath(); ctx1.moveTo(0, y); ctx1.lineTo(w1, y); ctx1.stroke();
+    }
+    // zero line
+    const zeroY = h1/2;
+    ctx1.strokeStyle = '#d0d4da'; ctx1.lineWidth = 1;
+    ctx1.beginPath(); ctx1.moveTo(0, zeroY); ctx1.lineTo(w1, zeroY); ctx1.stroke();
+
+    // Draw individual components (faint)
+    const colors = ['#86efac', '#93c5fd', '#fca5a5'];
+    const comps = [
+      {a: a1, f: f1, p: p1}, {a: a2, f: f2, p: p2}, {a: a3, f: f3, p: 0}
+    ];
+    const maxAmp = Math.max(a1+a2+a3+noise, 0.5);
+    const yScale = (h1/2 - 10) / maxAmp;
+    comps.forEach((c, idx) => {
+      if (c.a < 0.01) return;
+      ctx1.strokeStyle = colors[idx]; ctx1.lineWidth = 1;
+      ctx1.beginPath();
+      for (let i = 0; i < L; i++) {
+        const t = i / L;
+        const v = c.a * Math.sin(2*Math.PI*c.f*t + c.p);
+        const x = (i/(L-1))*w1;
+        const y = zeroY - v * yScale;
+        if (i === 0) ctx1.moveTo(x, y); else ctx1.lineTo(x, y);
+      }
+      ctx1.stroke();
+    });
+
+    // Draw combined signal
+    ctx1.strokeStyle = '#1f2937'; ctx1.lineWidth = 2;
+    ctx1.beginPath();
+    for (let i = 0; i < L; i++) {
+      const x = (i/(L-1))*w1;
+      const y = zeroY - signal[i] * yScale;
+      if (i === 0) ctx1.moveTo(x, y); else ctx1.lineTo(x, y);
+    }
+    ctx1.stroke();
+
+    // Legend
+    ctx1.font = '11px sans-serif'; ctx1.textAlign = 'left';
+    ctx1.fillStyle = '#86efac'; ctx1.fillText('— 分量1', 8, 14);
+    ctx1.fillStyle = '#93c5fd'; ctx1.fillText('— 分量2', 60, 14);
+    ctx1.fillStyle = '#fca5a5'; ctx1.fillText('— 分量3', 112, 14);
+    ctx1.fillStyle = '#1f2937'; ctx1.fillText('— 合成信号', 168, 14);
+
+    // --- Compute DFT ---
+    const halfLen = Math.floor(L/2) + 1;
+    const mags = [];
+    for (let k = 0; k < halfLen; k++) {
+      let re = 0, im = 0;
+      for (let n = 0; n < L; n++) {
+        const ang = -2*Math.PI*k*n/L;
+        re += signal[n]*Math.cos(ang);
+        im += signal[n]*Math.sin(ang);
+      }
+      mags.push(Math.sqrt(re*re + im*im) / L * 2);
+    }
+
+    // --- Draw frequency domain ---
+    const cFreq = setupCanvas(document.getElementById('viz-fft-freq'), 140);
+    const ctx2 = cFreq.ctx, w2 = cFreq.w, h2 = cFreq.h;
+    ctx2.clearRect(0, 0, w2, h2);
+    // grid
+    ctx2.strokeStyle = '#eef0f4'; ctx2.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = (i/4)*h2;
+      ctx2.beginPath(); ctx2.moveTo(0, y); ctx2.lineTo(w2, y); ctx2.stroke();
+    }
+    // bars
+    const maxM = Math.max(...mags, 0.01);
+    const bw = w2 / halfLen;
+    for (let i = 0; i < halfLen; i++) {
+      const bh = (mags[i] / maxM) * (h2 - 25);
+      // Color by frequency band
+      let c = '#059669'; // low
+      if (i > 6) c = '#2563eb'; // mid
+      if (i > 25) c = '#dc2626'; // high
+      ctx2.fillStyle = c;
+      ctx2.fillRect(i*bw + 0.3, h2 - bh - 18, Math.max(bw - 0.6, 0.5), bh);
+    }
+    // axis label
+    ctx2.font = '10px sans-serif'; ctx2.fillStyle = '#6b7280'; ctx2.textAlign = 'left';
+    ctx2.fillText('0', 2, h2 - 4);
+    ctx2.textAlign = 'center';
+    ctx2.fillText('频率 →', w2/2, h2 - 4);
+    ctx2.textAlign = 'right';
+    ctx2.fillText('Nyquist', w2 - 2, h2 - 4);
+    ctx2.textAlign = 'left';
+    ctx2.fillStyle = '#059669'; ctx2.fillText('■ 低频', 4, 12);
+    ctx2.fillStyle = '#2563eb'; ctx2.fillText('■ 中频', 44, 12);
+    ctx2.fillStyle = '#dc2626'; ctx2.fillText('■ 高频', 84, 12);
+
+    // --- Info text ---
+    const peaks = [];
+    for (let k = 1; k < halfLen-1; k++) {
+      if (mags[k] > mags[k-1] && mags[k] > mags[k+1] && mags[k] > maxM * 0.1) {
+        peaks.push({freq: k, mag: mags[k]});
+      }
+    }
+    let info = '检测到 ' + peaks.length + ' 个频率峰值: ';
+    info += peaks.map(p => p.freq + 'Hz (振幅 ' + p.mag.toFixed(2) + ')').join(', ');
+    info += '。 拖动滑块改变参数，观察时域波形和频域频谱的对应关系。';
+    document.getElementById('fft-info').textContent = info;
+  }
+
+  ['fft-freq1','fft-amp1','fft-phase1','fft-freq2','fft-amp2','fft-phase2',
+   'fft-freq3','fft-amp3','fft-noise-level'].forEach(id =>
+    document.getElementById(id).addEventListener('input', update)
+  );
+  window.addEventListener('resize', () => setTimeout(update, 100));
+  setTimeout(update, 200);
+})();
+</script>
 </body>
 </html>
