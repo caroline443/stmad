@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpCA 详细解读 — Spectral Channel Attention Network</title>
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$']],
+      displayMath: [['$$', '$$']]
+    },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d29;
+    --card-light: #232735;
+    --text: #e4e6eb;
+    --text-dim: #9ca3af;
+    --accent: #60a5fa;
+    --accent-2: #c084fc;
+    --green: #4ade80;
+    --orange: #fb923c;
+    --red: #f87171;
+    --border: #2d3142;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", "Helvetica Neue", sans-serif;
+    line-height: 1.8;
+    font-size: 16px;
+  }
+
+  /* ---- Hero ---- */
+  .hero {
+    background: linear-gradient(135deg, #1e3a5f 0%, #1a1d29 60%, #2d1b4e 100%);
+    padding: 80px 40px 60px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 2.6em;
+    font-weight: 700;
+    margin-bottom: 12px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero .subtitle { font-size: 1.15em; color: var(--text-dim); }
+  .hero .badges {
+    margin-top: 20px;
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+  }
+  .badge {
+    background: rgba(96,165,250,0.12);
+    border: 1px solid rgba(96,165,250,0.3);
+    color: var(--accent);
+    padding: 5px 16px;
+    border-radius: 20px;
+    font-size: 0.85em;
+  }
+
+  /* ---- Layout ---- */
+  .container { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+  section { margin-bottom: 56px; }
+  h2 {
+    font-size: 1.7em;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border);
+    color: var(--accent);
+  }
+  h3 {
+    font-size: 1.25em;
+    margin: 28px 0 12px;
+    color: var(--accent-2);
+  }
+  h4 {
+    font-size: 1.08em;
+    margin: 20px 0 8px;
+    color: var(--green);
+  }
+  p { margin-bottom: 14px; color: var(--text); }
+  strong { color: var(--text); }
+  code {
+    background: var(--card-light);
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 0.9em;
+    color: var(--orange);
+  }
+
+  /* ---- Cards ---- */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin: 20px 0;
+  }
+  .card-tip {
+    background: rgba(74,222,128,0.07);
+    border-left: 4px solid var(--green);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  .card-warn {
+    background: rgba(251,146,60,0.07);
+    border-left: 4px solid var(--orange);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  .card-info {
+    background: rgba(96,165,250,0.07);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+
+  /* ---- Formula box ---- */
+  .formula-box {
+    background: var(--card-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin: 16px 0;
+    overflow-x: auto;
+  }
+  .formula-label {
+    font-size: 0.8em;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ---- Table ---- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.95em;
+  }
+  th, td {
+    padding: 10px 14px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    background: var(--card-light);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  tr:hover { background: rgba(96,165,250,0.05); }
+  .best { color: var(--green); font-weight: 700; }
+  .ours { background: rgba(96,165,250,0.08); }
+
+  /* ---- Pipeline ---- */
+  .pipeline {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin: 24px 0;
+  }
+  .pipe-step {
+    background: var(--card-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    text-align: center;
+    font-size: 0.88em;
+    min-width: 120px;
+  }
+  .pipe-arrow { color: var(--accent); font-size: 1.3em; }
+
+  /* ---- Flowchart ---- */
+  .flowchart {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin: 20px 0;
+  }
+  .flow-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .flow-box {
+    background: var(--card-light);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 18px;
+    text-align: center;
+    font-size: 0.9em;
+  }
+  .flow-box-accent {
+    border-color: var(--accent);
+    background: rgba(96,165,250,0.1);
+  }
+  .flow-box-green {
+    border-color: var(--green);
+    background: rgba(74,222,128,0.1);
+  }
+  .flow-box-purple {
+    border-color: var(--accent-2);
+    background: rgba(192,132,252,0.1);
+  }
+  .flow-down { color: var(--text-dim); font-size: 1.5em; text-align: center; }
+
+  /* ---- Misc ---- */
+  .tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    margin-right: 6px;
+  }
+  .tag-low { background: rgba(74,222,128,0.15); color: var(--green); }
+  .tag-mid { background: rgba(96,165,250,0.15); color: var(--accent); }
+  .tag-high { background: rgba(248,113,113,0.15); color: var(--red); }
+
+  .dim { color: var(--text-dim); font-size: 0.9em; }
+  .highlight { background: rgba(251,146,60,0.15); padding: 1px 5px; border-radius: 3px; }
+
+  ul, ol { margin-left: 24px; margin-bottom: 14px; }
+  li { margin-bottom: 6px; }
+
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 40px;
+  }
+  .toc ol { margin-left: 20px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  footer {
+    text-align: center;
+    padding: 30px;
+    color: var(--text-dim);
+    font-size: 0.85em;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== HERO ===== -->
+<div class="hero">
+  <h1>SpCA: Spectral Channel Attention Network</h1>
+  <p class="subtitle">基于频谱通道注意力网络的航天器遥测异常检测</p>
+  <div class="badges">
+    <span class="badge">ESA-AD Event F₀.₅ = 0.934</span>
+    <span class="badge">SMAP F1 = 0.700 (无泄漏)</span>
+    <span class="badge">注意力复杂度降低 100×</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ===== TOC ===== -->
+<div class="toc">
+  <h3 style="margin-top:0">目录</h3>
+  <ol>
+    <li><a href="#bg">研究背景：为什么需要航天器异常检测</a></li>
+    <li><a href="#landscape">研究现状：现有方法及其局限</a></li>
+    <li><a href="#motivation">核心动机：为什么用频域分解</a></li>
+    <li><a href="#problem">问题定义：形式化描述</a></li>
+    <li><a href="#architecture">SpCA 架构总览</a></li>
+    <li><a href="#fft">前置知识：傅里叶变换</a></li>
+    <li><a href="#step1">第一步：频带分解（Spectral Band Decomposition）</a></li>
+    <li><a href="#step2">第二步：逐频带编码 + 通道注意力（CCA）</a></li>
+    <li><a href="#step3">第三步：频带融合（Spectral Fusion）</a></li>
+    <li><a href="#step4">第四步：全局 CCA</a></li>
+    <li><a href="#step5">第五步：预测头（Forecast Head）</a></li>
+    <li><a href="#training">训练：复合损失函数</a></li>
+    <li><a href="#detection">异常检测：POT 动态阈值</a></li>
+    <li><a href="#esa">实验一：ESA-AD 数据集</a></li>
+    <li><a href="#ablation">消融实验</a></li>
+    <li><a href="#smap">实验二：SMAP 数据集与评测协议</a></li>
+    <li><a href="#efficiency">计算效率分析</a></li>
+    <li><a href="#conclusion">总结</a></li>
+  </ol>
+</div>
+
+<!-- ===== 1. BACKGROUND ===== -->
+<section id="bg">
+<h2>1. 研究背景：为什么需要航天器异常检测</h2>
+
+<p>航天器在轨运行期间，会持续产生大量遥测数据——温度、电压、电流、姿态角速度等。这些数据通过下行链路传回地面站，需要实时监控以发现可能的异常。异常可能意味着设备老化、组件故障、或者外部环境冲击，如果不能及时发现，可能导致任务失败甚至航天器损毁。</p>
+
+<p>传统的做法是设置固定阈值：温度超过 80°C 就报警。但这种方法有两个问题。第一，航天器工作环境复杂，正常波动范围很大，固定阈值要么误报太多，要么漏报。第二，有些异常不是单个参数超限，而是多个参数之间的关联关系发生了变化——比如温度没超限但温升速率异常，或者两个本该同步的传感器突然不同步了。</p>
+
+<p>所以研究转向了基于机器学习的方法，核心思路是：<strong>让模型学会正常遥测数据的模式，当数据偏离学到的模式时就标记为异常</strong>。</p>
+</section>
+
+<!-- ===== 2. LANDSCAPE ===== -->
+<section id="landscape">
+<h2>2. 研究现状：现有方法及其局限</h2>
+
+<h3>2.1 预测范式</h3>
+<p>目前主流的深度学习方法遵循<strong>预测范式</strong>（predictive paradigm）：用历史遥测数据训练一个模型预测未来若干步的值。模型在正常数据上训练，学会预测正常模式。推理时，拿模型预测值跟真实值比较，偏差大就说明数据偏离了正常模式，即异常。</p>
+
+<div class="card-info">
+  <strong>类比</strong>：就像一个经验丰富的工程师，看了几个月的正常运行数据后，能凭经验预测"接下来温度应该在这个范围"。如果实际温度跟预测差太多，他就觉得不对劲。
+</div>
+
+<h3>2.2 三代方法</h3>
+
+<h4>第一代：LSTM（2018）</h4>
+<p>Hundman 等人 (2018) 用 LSTM 网络预测航天器遥测，开创了这一方向 <code>\cite{hundman2018}</code>。LSTM 擅长处理时序数据，能学到时间上的依赖关系。但它对每个通道单独建模，<strong>不建模通道间的关系</strong>——温度和电压之间的关联完全忽略了。</p>
+
+<h4>第二代：图神经网络 GNN（2021）</h4>
+<p> Deng 和 Hooi (2021) 提出 GDN <code>\cite{deng2021gdn}</code>，用图神经网络建模传感器之间的依赖关系。每个传感器是图的一个节点，传感器间的影响是图的边。这解决了一代方法忽略通道关系的问题。但 GDN 的图结构是静态的，不能适应不同异常场景下传感器关系的变化。</p>
+
+<h4>第三代：Transformer 及图注意力（2022-2026）</h4>
+<p>近年方法引入 Transformer 架构，用注意力机制建模长距离时序依赖。Anomaly Transformer <code>\cite{xu2022anomalytrans}</code> 提出关联离散度来检测异常。PatchTST <code>\cite{nie2023}</code> 把时间序列切成 patch 作为 token。最新的 PSTG <code>\cite{chen2026pstg}</code> 结合了图建模和 Transformer，用动态图注意力在 $C \times N$ 个时空节点上建模传感器关系和时间关系，在 ESA-AD 基准上取得了最好的成绩。</p>
+
+<h3>2.3 PSTG 的局限</h3>
+<p>PSTG 虽然效果好，但有一个明显的代价：<strong>注意力复杂度太高</strong>。它把 $C$ 个通道和 $N$ 个时间 patch 组合成 $C \times N$ 个节点，注意力需要在这 $C \times N$ 个节点之间两两计算，复杂度是：</p>
+
+<div class="formula-box">
+$$\text{PSTG 注意力对数} = (C \times N)^2 = C^2 N^2$$
+</div>
+
+<p>对于 SMAP 数据集（$C=55$ 通道，$N=10$ 个 patch），这意味着 $55^2 \times 10^2 = 302{,}500$ 个注意力对。这在资源受限的航天器部署场景中是一个严重问题。</p>
+
+<div class="card-warn">
+  <strong>核心问题</strong>：能不能在保持（甚至提升）检测性能的前提下，大幅降低计算复杂度？
+</div>
+</section>
+
+<!-- ===== 3. MOTIVATION ===== -->
+<section id="motivation">
+<h2>3. 核心动机：为什么用频域分解</h2>
+
+<p>SpCA 的设计基于一个关键物理观察：<strong>航天器遥测数据有很强的周期性</strong>。</p>
+
+<p>航天器在轨道上运行，其遥测数据受到多种周期性物理过程的驱动：</p>
+<ul>
+  <li><span class="tag tag-low">低频</span> <strong>轨道周期</strong>：航天器绕地球一圈约 90 分钟，光照-阴影交替导致温度缓慢周期性变化</li>
+  <li><span class="tag tag-mid">中频</span> <strong>热循环</strong>：设备开关机、姿态调整等操作引起的周期性波动</li>
+  <li><span class="tag tag-high">高频</span> <strong>瞬态扰动</strong>：仪器噪声、微小振动、粒子冲击等快速波动</li>
+</ul>
+
+<p>这些过程天然分布在不同的频率范围。PSTG 用图来建模传感器之间的空间关系，用 patch 来建模时间关系——但这是在<strong>时域</strong>里做的工作。如果数据本身有天然的频域结构，为什么不直接在频域上做分解呢？</p>
+
+<p>这就是 SpCA 的核心思路：</p>
+<div class="card-tip">
+  <strong>用 FFT 频带分解替代图建模</strong>，用<strong>通道注意力替代图注意力</strong>，在保持性能的同时把注意力复杂度从 $O(C^2 N^2 D)$ 降到 $O(C^2 D)$。
+</div>
+</section>
+
+<!-- ===== 4. PROBLEM ===== -->
+<section id="problem">
+<h2>4. 问题定义</h2>
+
+<p>给定多通道遥测序列 $\mathbf{X} \in \mathbb{R}^{T \times C}$，其中 $T$ 是总时间步数，$C$ 是通道数。用长度为 $L$ 的滑动窗口截取数据，每个窗口 $\mathbf{x} \in \mathbb{R}^{C \times L}$。</p>
+
+<p>模型的任务是用窗口内的历史数据预测未来 $F$ 步的值：</p>
+
+<div class="formula-box">
+$$\hat{\mathbf{x}} = f(\mathbf{x}) \in \mathbb{R}^{C \times F}$$
+</div>
+
+<p>其中 $f$ 是 SpCA 模型。推理时，计算预测值 $\hat{\mathbf{x}}$ 与真实值 $\mathbf{x}_{\text{future}}$ 之间的残差，残差大的时间点标记为异常。</p>
+</section>
+
+<!-- ===== 5. ARCHITECTURE OVERVIEW ===== -->
+<section id="architecture">
+<h2>5. SpCA 架构总览</h2>
+
+<p>SpCA 由 5 个组件串联组成：</p>
+
+<div class="flowchart">
+  <div class="flow-row">
+    <div class="flow-box">输入<br><code>C × L</code><br>(如 6×250)</div>
+    <div class="pipe-arrow">→</div>
+    <div class="flow-box flow-box-accent">① 频带分解<br>FFT → 切3段 → irFFT</div>
+    <div class="pipe-arrow">→</div>
+    <div class="flow-box flow-box-purple">② 逐频带编码+CCA</div>
+  </div>
+  <div class="flow-row" style="margin-top:4px">
+    <div class="flow-box flow-box-green">⑤ 预测头<br>线性映射</div>
+    <div class="pipe-arrow">←</div>
+    <div class="flow-box flow-box-purple">④ 全局CCA<br>(2层)</div>
+    <div class="pipe-arrow">←</div>
+    <div class="flow-box flow-box-green">③ 频带融合<br>加权求和</div>
+    <div class="pipe-arrow">←</div>
+    <div class="flow-box" style="visibility:hidden">占位</div>
+  </div>
+  <p class="dim" style="text-align:center; margin-top:12px; font-size:0.85em">
+    数据流：6×250 → 3个(6×250) → 3个(6×192) → 1个(6×192) → 1个(6×192) → 6×10
+  </p>
+</div>
+</section>
+
+<!-- ===== 6. FFT PREREQUISITE ===== -->
+<section id="fft">
+<h2>6. 前置知识：傅里叶变换</h2>
+
+<h3>6.1 直觉理解</h3>
+
+<p>想象你听到一段音乐。你听到的是声波随时间高低起伏的波形。但你也能换一种方式描述这段音乐：它是由哪些频率的音符组成的，每个音符有多响。比如 440Hz 的成分很强（钢琴的 A4），220Hz 也有一点，其他频率几乎没有。</p>
+
+<div class="card-info">
+  <strong>傅里叶变换</strong>就是把"随时间变化的波形"拆解成"由哪些频率组成"的数学工具。你的耳朵天然就在做类似的事情——能分辨音乐中的低音、中音和高音。
+</div>
+
+<h3>6.2 数学定义</h3>
+
+<p>离散傅里叶变换（DFT）将长度为 $L$ 的实数序列 $\{x_0, x_1, \ldots, x_{L-1}\}$ 变换为频域表示：</p>
+
+<div class="formula-box">
+$$\text{DFT:} \quad X_k = \sum_{n=0}^{L-1} x_n \, e^{-i \frac{2\pi k}{L} n}, \quad k = 0, 1, \ldots, L-1$$
+</div>
+
+<p>每个 $X_k$ 是一个复数，表示频率为 $k/L$ 的成分：</p>
+<ul>
+  <li>$|X_k|$（模长）= 这个频率上的<strong>振幅</strong>（有多强）</li>
+  <li>$\arg(X_k)$（辐角）= 这个频率上的<strong>相位</strong>（在时间上的偏移）</li>
+</ul>
+
+<p>逆离散傅里叶变换（IDFT）把它变回时域：</p>
+
+<div class="formula-box">
+$$\text{IDFT:} \quad x_n = \frac{1}{L} \sum_{k=0}^{L-1} X_k \, e^{i \frac{2\pi k}{L} n}, \quad n = 0, 1, \ldots, L-1$$
+</div>
+
+<h3>6.3 rFFT：实数优化</h3>
+
+<p>因为遥测数据是实数（温度 23.5°C，不是复数），FFT 结果具有<strong>共轭对称性</strong>：$X_k = X_{L-k}^*$，后半部分跟前半部分信息重复。<strong>rFFT</strong>（real FFT）只保留前 $L/2+1$ 个频率分量，省掉冗余。对于 $L=250$：普通 FFT 输出 250 个复数，rFFT 只输出 126 个，计算量减半。</p>
+
+<h3>6.4 为什么跟异常检测有关</h3>
+
+<p>正常情况下，航天器遥测在各个频段的能量分布是稳定的——低频有轨道周期，中频有热循环，高频有仪器噪声。当异常发生时（比如设备故障、传感器漂移），某些频段的能量分布会发生变化——可能高频突然出现尖峰，或者低频趋势偏离。所以<strong>在频域上分解后分别观察</strong>，比在时域上看整体波形更容易发现异常。</p>
+</section>
+
+<!-- ===== STEP 1 ===== -->
+<section id="step1">
+<h2>7. 第一步：频带分解（Spectral Band Decomposition）</h2>
+
+<h3>7.1 操作流程</h3>
+
+<p>输入窗口 $\mathbf{x} \in \mathbb{R}^{C \times L}$，对每个通道的 $L$ 个时间点做如下操作：</p>
+
+<p><strong>Step A：rFFT 变频域</strong>。对每个通道的时间序列做 rFFT，得到频域表示 $\mathbf{X}_{\text{freq}}$，包含 $L/2+1$ 个复数频率分量。</p>
+
+<p><strong>Step B：掩码切分</strong>。设计 $K=3$ 个掩码向量 $\mathbf{m}^{(1)}, \mathbf{m}^{(2)}, \mathbf{m}^{(3)}$，每个长度 $L/2+1$，取值为 0 或 1。分割点设在相对于 Nyquist 频率的 0.1 和 0.4 处：</p>
+
+<div class="formula-box">
+$$\text{低频: } m^{(1)}_k = \begin{cases} 1 & k \leq 0.1 \times (L/2) \\ 0 & \text{otherwise} \end{cases}$$
+$$\text{中频: } m^{(2)}_k = \begin{cases} 1 & 0.1 \times (L/2) < k \leq 0.4 \times (L/2) \\ 0 & \text{otherwise} \end{cases}$$
+$$\text{高频: } m^{(3)}_k = \begin{cases} 1 & k > 0.4 \times (L/2) \\ 0 & \text{otherwise} \end{cases}$$
+</div>
+
+<p>对于 $L=250$：低频 = 索引 0~12（13个），中频 = 索引 13~50（38个），高频 = 索引 51~125（75个）。</p>
+
+<p><strong>Step C：掩码相乘</strong>。把掩码和频域表示逐点相乘，只保留该频段的频率分量，其他归零：</p>
+
+<div class="formula-box">
+$$\mathbf{X}^{(k)}_{\text{freq}} = \mathbf{X}_{\text{freq}} \odot \mathbf{m}^{(k)}$$
+</div>
+
+<p>其中 $\odot$ 表示逐元素相乘。</p>
+
+<p><strong>Step D：irFFT 变回时域</strong>。对掩码后的频域信号做逆变换，得到只含该频段成分的时域信号：</p>
+
+<div class="formula-box">
+$$\boxed{\mathbf{x}^{(k)} = \text{irFFT}(\mathbf{X}_{\text{freq}} \odot \mathbf{m}^{(k)},\; n=L)}$$
+</div>
+
+<p>结果：原本 1 个 $\mathbf{x} \in \mathbb{R}^{C \times L}$ 变成了 3 个 $\mathbf{x}^{(1)}, \mathbf{x}^{(2)}, \mathbf{x}^{(3)} \in \mathbb{R}^{C \times L}$。</p>
+
+<h3>7.2 直觉理解</h3>
+
+<div class="card-tip">
+  这就像用三个带通滤波器把信号滤成三层：低频层只有缓慢趋势，中频层只有中等周期的波动，高频层只有快速抖动。相当于把一段音乐拆成低音轨、中音轨、高音轨，分别处理后再混音。
+</div>
+
+<h3>7.3 为什么这样设计</h3>
+
+<ul>
+  <li><strong>物理对齐</strong>：分割点 0.1 和 0.4 不是随便选的。航天器遥测的频谱能量主要集中在低频（轨道周期），中频（热循环）次之，高频（噪声）最低。0.1/0.4 的分割使得低频带窄而精（捕捉主要趋势），高频带宽而松（捕捉各种瞬态）。</li>
+  <li><strong>固定而非可学习</strong>：分割点用固定比例而非可学习参数，减少过拟合风险，且物理意义明确。</li>
+  <li><strong>无损分解</strong>：三个掩码加起来覆盖全部频率，不丢信息。如果三层直接相加 $\mathbf{x}^{(1)}+\mathbf{x}^{(2)}+\mathbf{x}^{(3)} = \mathbf{x}$，等于原始信号。</li>
+</ul>
+
+<h3>7.4 计算开销</h3>
+
+<p>rFFT 和 irFFT 的复杂度都是 $O(L \log L)$，3 个频带共 $O(3L \log L)$。对于 $L=250$，这约 $3 \times 250 \times 8 \approx 6000$ 次运算，相比注意力层的节省（30 万→3 千），可以忽略。</p>
+</section>
+
+<!-- ===== STEP 2 ===== -->
+<section id="step2">
+<h2>8. 第二步：逐频带编码 + 通道注意力（CCA）</h2>
+
+<p>对 3 个频带的子序列<strong>各自独立</strong>做如下处理。</p>
+
+<h3>8.1 线性投影（编码）</h3>
+
+<p>每个频带子序列 $\mathbf{x}^{(k)} \in \mathbb{R}^{C \times L}$ 经过一个线性层，把 $L$ 维压缩到 $D$ 维（$D=192$ 或 $256$）：</p>
+
+<div class="formula-box">
+$$\mathbf{z}^{(k)} = \text{LN}(\mathbf{W}^{(k)} \mathbf{x}^{(k)\top})^\top \in \mathbb{R}^{C \times D}$$
+</div>
+
+<p>解释每个符号：</p>
+<ul>
+  <li>$\mathbf{W}^{(k)} \in \mathbb{R}^{D \times L}$：第 $k$ 个频带的投影权重矩阵（可学习参数）</li>
+  <li>$\mathbf{x}^{(k)\top}$：转置，从 $C \times L$ 变成 $L \times C$，这样 $\mathbf{W}^{(k)} \mathbf{x}^{(k)\top}$ 得到 $D \times C$</li>
+  <li>再转置回来，得到 $C \times D$</li>
+  <li>$\text{LN}$：Layer Normalization，对每个通道的 $D$ 维向量做归一化（均值为 0，方差为 1），稳定训练</li>
+</ul>
+
+<p>结果：每个频带得到 $\mathbf{z}^{(k)} \in \mathbb{R}^{C \times D}$——$C$ 个通道，每个通道一个 $D$ 维 embedding。以 ESA-AD 为例，$6 \times 192$。</p>
+
+<h3>8.2 通道注意力（CCA）</h3>
+
+<p>这是 SpCA 的核心创新之一。<strong>把通道当 token</strong>，让不同传感器之间交换信息。</p>
+
+<h4>标准自注意力回顾</h4>
+<p>Vaswani 等人 (2017) 提出的多头自注意力 <code>\cite{vaswani2017}</code>。给定输入 $\mathbf{Z} \in \mathbb{R}^{n \times d}$（$n$ 个 token，每个 $d$ 维），用三个可学习的权重矩阵生成 Query、Key、Value：</p>
+
+<div class="formula-box">
+$$\mathbf{Q} = \mathbf{Z}\mathbf{W}_Q, \quad \mathbf{K} = \mathbf{Z}\mathbf{W}_K, \quad \mathbf{V} = \mathbf{Z}\mathbf{W}_V$$
+$$\text{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_h}}\right)\mathbf{V}$$
+</div>
+
+<p>其中 $d_h = D / H$ 是每个注意力头的维度（$H=4$ 头），$\sqrt{d_h}$ 用于缩放防止点积过大。</p>
+
+<h4>SpCA 的关键区别</h4>
+
+<div class="card">
+<table>
+<tr><th></th><th>传统 Transformer</th><th>PSTG</th><th>SpCA</th></tr>
+<tr><td><strong>Token</strong></td><td>时间步</td><td>通道×patch</td><td><strong>通道</strong></td></tr>
+<tr><td><strong>注意力矩阵</strong></td><td>$L \times L$</td><td>$(CN) \times (CN)$</td><td>$C \times C$</td></tr>
+<tr><td><strong>注意力对数</strong></td><td>$L^2$ (62,500)</td><td>$C^2N^2$ (302,500)</td><td><strong>$C^2$ (36)</strong></td></tr>
+<tr><td><strong>建模对象</strong></td><td>时间依赖</td><td>时空联合</td><td><strong>通道间关系</strong></td></tr>
+</table>
+<p class="dim" style="text-align:center; margin-top:8px">以 ESA-AD 参数 ($C=6, N=10, L=250$) 为例</p>
+</div>
+
+<p>在 SpCA 中，$\mathbf{Z} = \mathbf{z}^{(k)} \in \mathbb{R}^{C \times D}$，$n = C$。注意力矩阵 $\mathbf{Q}\mathbf{K}^\top \in \mathbb{R}^{C \times C}$，每个元素 $(i,j)$ 表示通道 $i$ 对通道 $j$ 的关注程度。比如温度传感器可能强烈关注电压传感器的状态，因为温度变化往往跟电压波动相关。</p>
+
+<h4>完整的 CCA 模块</h4>
+<p>注意力之后接标准的后处理：</p>
+
+<div class="formula-box">
+$$\mathbf{z}'^{(k)} = \text{LN}(\mathbf{z}^{(k)} + \text{Attn}(\mathbf{Q}, \mathbf{K}, \mathbf{V}))} \quad \text{(残差连接 + LayerNorm)}$$
+$$\mathbf{z}''^{(k)} = \text{LN}(\mathbf{z}'^{(k)} + \text{FFN}(\mathbf{z}'^{(k)}))} \quad \text{(FFN + 残差 + LayerNorm)}$$
+</div>
+
+<p>其中 FFN（Feed-Forward Network）是两层全连接：</p>
+
+<div class="formula-box">
+$$\text{FFN}(\mathbf{z}) = \text{GELU}(\mathbf{z}\mathbf{W}_1 + \mathbf{b}_1)\mathbf{W}_2 + \mathbf{b}_2$$
+</div>
+
+<p>$\mathbf{W}_1 \in \mathbb{R}^{D \times 4D}$，$\mathbf{W}_2 \in \mathbb{R}^{4D \times D}$，即隐藏层扩展到 $4D = 768$ 维。GELU 是激活函数（Gaussian Error Linear Unit），比 ReLU 更平滑。</p>
+
+<h3>8.3 效果</h3>
+<p>经过这一步，3 个频带各得到一个 $\mathbf{z}^{(k)} \in \mathbb{R}^{C \times D}$，每个都融合了该频段内通道之间的关系信息。关键效果是：<strong>让模型学会哪些传感器之间是相关的</strong>，而无需显式构建图结构。</p>
+</section>
+
+<!-- ===== STEP 3 ===== -->
+<section id="step3">
+<h2>9. 第三步：频带融合（Spectral Fusion）</h2>
+
+<p>3 个频带的特征需要合在一起。用<strong>可学习的 softmax 权重</strong>做加权求和：</p>
+
+<div class="formula-box">
+$$\alpha_k = \frac{\exp(w_k)}{\sum_{j=1}^{K} \exp(w_j)}, \quad k = 1, 2, 3$$
+$$\boxed{\mathbf{z}_{\text{fused}} = \sum_{k=1}^{K} \alpha_k \, \mathbf{z}^{(k)}}$$
+</div>
+
+<p>其中 $w_1, w_2, w_3$ 是 3 个可学习的标量参数，softmax 保证 $\alpha_1 + \alpha_2 + \alpha_3 = 1$。</p>
+
+<h3>为什么用 softmax 而不是简单拼接</h3>
+<ul>
+  <li><strong>参数少</strong>：只有 3 个标量，几乎不增加模型参数</li>
+  <li><strong>可解释</strong>：训练后可以看 $\alpha_k$ 的值，了解哪个频带最重要（实验中发现低频权重最大）</li>
+  <li><strong>维度不变</strong>：输出仍然是 $C \times D$，不增加后续层的计算量</li>
+</ul>
+
+<p>结果：$\mathbf{z}_{\text{fused}} \in \mathbb{R}^{C \times D}$，融合了三个频带的信息。</p>
+</section>
+
+<!-- ===== STEP 4 ===== -->
+<section id="step4">
+<h2>10. 第四步：全局 CCA</h2>
+
+<p>在融合后的特征上再叠 $L_g = 2$ 层 CCA（跟第二步完全相同的模块），让不同频带的信息在通道维度上进一步混合和精炼。</p>
+
+<div class="card-info">
+  <strong>为什么要再加 CCA？</strong> 第二步的 CCA 是在每个频带内部做的——温度只跟温度的频带内特征交流。但不同频带融合后，低频的温度特征和高频的电压特征混在了一起，需要再过 CCA 让它们充分交互。比如：低频温度异常 + 高频电压尖峰一起出现时，可能意味着更严重的故障。
+</div>
+
+<p>结果：$\mathbf{z}_{\text{global}} \in \mathbb{R}^{C \times D}$，精炼后的表示。</p>
+</section>
+
+<!-- ===== STEP 5 ===== -->
+<section id="step5">
+<h2>11. 第五步：预测头（Forecast Head）</h2>
+
+<p>一个简单的线性层，把 $\mathbf{z}_{\text{global}} \in \mathbb{R}^{C \times D}$ 映射到预测 $\hat{\mathbf{x}} \in \mathbb{R}^{C \times F}$：</p>
+
+<div class="formula-box">
+$$\hat{\mathbf{x}} = \mathbf{z}_{\text{global}} \, \mathbf{W}_{\text{out}} + \mathbf{b}_{\text{out}}$$
+</div>
+
+<p>其中 $\mathbf{W}_{\text{out}} \in \mathbb{R}^{D \times F}$，$F=10$（预测未来 10 步）。每个通道独立预测自己未来 10 个时间点的值。</p>
+
+<div class="card-tip">
+  预测头故意设计得极简（就一层线性映射），因为所有的特征提取工作已经在前面的频带分解和 CCA 中完成了。这也避免了过度参数化导致的过拟合。
+</div>
+</section>
+
+<!-- ===== TRAINING ===== -->
+<section id="training">
+<h2>12. 训练：复合损失函数</h2>
+
+<p>训练时使用 PSTG <code>\cite{chen2026pstg}</code> 提出的复合损失，由三部分组成：</p>
+
+<div class="formula-box">
+$$\boxed{\mathcal{L} = \mathcal{L}_{\text{MSE}} + 0.1 \, \mathcal{L}_{\text{freq}} + 0.1 \, \mathcal{L}_{\text{shape}}}$$
+</div>
+
+<h3>12.1 MSE 损失（均方误差）</h3>
+
+<div class="formula-box">
+$$\mathcal{L}_{\text{MSE}} = \frac{1}{CF} \sum_{c=1}^{C} \sum_{t=1}^{F} (x_{t,c} - \hat{x}_{t,c})^2$$
+</div>
+
+<p>这是最基本的损失项，惩罚预测值与真实值之间的平方误差。让模型学会准确预测未来的遥测值。</p>
+
+<h3>12.2 频域损失</h3>
+
+<div class="formula-box">
+$$\mathcal{L}_{\text{freq}} = \frac{1}{CF} \sum_{c=1}^{C} \sum_{k=1}^{F/2} \left|\text{rFFT}(x_{:,c})_k - \text{rFFT}(\hat{x}_{:,c})_k\right|$$
+</div>
+
+<p>对预测值和真实值分别做 rFFT，在频域上计算误差。这迫使模型不仅要预测准数值，还要预测准<strong>频率成分</strong>——周期性波形不能预测偏了。权重 0.1 表示这是辅助损失，不能压过主损失。</p>
+
+<h3>12.3 形状损失（Shape Loss）</h3>
+
+<div class="formula-box">
+$$\mathcal{L}_{\text{shape}} = \frac{1}{C(F-1)} \sum_{c=1}^{C} \sum_{t=2}^{F} \left|(x_{t,c} - x_{t-1,c}) - (\hat{x}_{t,c} - \hat{x}_{t-1,c})\right|$$
+</div>
+
+<p>比较真实值和预测值的<strong>一阶差分</strong>（即时间梯度）。这迫使模型预测出正确的变化趋势——即使数值有偏差，上升/下降的形状要对。对于异常检测来说，趋势突变比绝对数值更重要。</p>
+
+<h3>12.4 为什么用复合损失</h3>
+<div class="card-tip">
+  三个损失各管一个方面：MSE 管"数值准不准"，频域损失管"周期对不对"，形状损失管"趋势方向对不对"。航天器遥测有强周期性，单一的 MSE 容易预测出平滑但周期错误的曲线，加上频域和形状约束可以避免这个问题。
+</div>
+
+<h3>12.5 超参数</h3>
+<table>
+<tr><th>超参数</th><th>ESA-AD</th><th>SMAP</th><th>说明</th></tr>
+<tr><td>$D$（embedding 维度）</td><td>192</td><td>256</td><td>SMAP 通道更多，用更大维度</td></tr>
+<tr><td>$K$（频带数）</td><td>3</td><td>3</td><td>低/中/高三段</td></tr>
+<tr><td>$H$（注意力头数）</td><td>4</td><td>4</td><td>每头 $D/H=48/64$ 维</td></tr>
+<tr><td>$L_b$（每频带 CCA 层数）</td><td>1</td><td>1</td><td>每个频带过 1 层 CCA</td></tr>
+<tr><td>$L_g$（全局 CCA 层数）</td><td>2</td><td>2</td><td>融合后再过 2 层</td></tr>
+<tr><td>$L$（窗口长度）</td><td>250</td><td>250</td><td>输入历史长度</td></tr>
+<tr><td>$F$（预测步数）</td><td>10</td><td>10</td><td>预测未来 10 步</td></tr>
+<tr><td>优化器</td><td colspan="2">AdamW</td><td>带权重衰减的 Adam</td></tr>
+<tr><td>学习率</td><td colspan="2">$5 \times 10^{-4}$</td><td>固定学习率</td></tr>
+<tr><td>训练轮数</td><td colspan="2">70</td><td>固定 epoch</td></tr>
+</table>
+</section>
+
+<!-- ===== DETECTION ===== -->
+<section id="detection">
+<h2>13. 异常检测：POT 动态阈值</h2>
+
+<h3>13.1 残差计算</h3>
+
+<p>推理时，模型给出预测 $\hat{\mathbf{x}} \in \mathbb{R}^{C \times F}$。对每个时间步 $t$，取所有通道中绝对误差最大的那个作为该时刻的异常分数：</p>
+
+<div class="formula-box">
+$$r_t = \max_{c} |x_{t,c} - \hat{x}_{t,c}|$$
+</div>
+
+<p>取 max 的原因是：任何一个通道出现异常都值得报警，而不是要求所有通道同时异常。</p>
+
+<h3>13.2 POT 方法</h3>
+
+<p>有了残差序列 $\{r_1, r_2, \ldots\}$，需要确定一个阈值 $z$，超过 $z$ 的标记为异常。<strong>Peaks Over Threshold (POT)</strong> <code>\cite{siffer2017}</code> 是一种基于极值理论的自适应阈值方法。</p>
+
+<h4>原理</h4>
+<p>极值理论告诉我们：如果我们只看残差序列中那些" peaks"（超过某个初始阈值的峰值），这些 peak 的超出量服从<strong>广义帕累托分布（GPD）</strong>：</p>
+
+<div class="formula-box">
+$$\text{GPD:} \quad F(y) = 1 - \left(1 + \frac{\xi y}{\sigma}\right)^{-1/\xi}, \quad y > 0$$
+</div>
+
+<p>其中 $\xi$ 是形状参数（决定尾部厚度），$\sigma$ 是尺度参数（决定分布宽度）。</p>
+
+<h4>操作步骤</h4>
+<ol>
+  <li><strong>初始阈值 $q_0$</strong>：取训练集残差的某个高分位数（如 $q_0 = 0.98$，即 98 分位数），作为"什么是 peak"的门槛</li>
+  <li><strong>提取 peaks</strong>：在训练集残差中找所有超过 $q_0$ 的值，计算超出量 $y_i = r_i - q_0$</li>
+  <li><strong>拟合 GPD</strong>：用这些超出量估计 GPD 参数 $\hat{\xi}, \hat{\sigma}$</li>
+  <li><strong>计算最终阈值</strong>：给定风险水平 $\alpha$（允许的误报率），阈值由下式确定：</li>
+</ol>
+
+<div class="formula-box">
+$$z = q_0 + \frac{\hat{\sigma}}{\hat{\xi}} \left[ \left(\frac{\alpha}{N_q}\right)^{-\hat{\xi}} - 1 \right]$$
+</div>
+
+<p>其中 $N_q$ 是训练集中超过 $q_0$ 的 peak 数量，$\alpha$ 是风险参数（ESA-AD: $\alpha=4\times10^{-3}$, SMAP: $\alpha=0.08$）。</p>
+
+<h3>13.3 为什么用 POT 而不是 best-F1</h3>
+
+<div class="card-warn">
+  <strong>best-F1 的问题</strong>：遍历所有可能的阈值，选使 F1 最大的那个。但 F1 需要用测试集标签计算，这意味着<strong>阈值选择过程中用到了测试集信息</strong>——这是信息泄漏，会严重高估模型性能。
+</div>
+
+<div class="card-tip">
+  <strong>POT 的优势</strong>：只用训练集残差拟合分布和确定阈值，完全不碰测试集标签。测试集来了之后只是拿阈值去判异常，没有"偷看答案"。这是严格的<strong>无泄漏协议</strong>。
+</div>
+
+<p>这个区别非常重要。在 SMAP 数据集上，同一模型用 best-F1 阈值能报 0.892（Anomaly Transformer），但用无泄漏的 POT 阈值只有 0.104（GDN）。差距全部来自评测协议。</p>
+</section>
+
+<!-- ===== ESA-AD EXPERIMENT ===== -->
+<section id="esa">
+<h2>14. 实验一：ESA-AD 数据集</h2>
+
+<h3>14.1 数据集</h3>
+<p><strong>ESA-AD Mission 1</strong> <code>\cite{zenodo2024}</code>：欧空局航天器遥测数据，6 个通道，测试集包含 33 个异常事件。基线方法的数字全部来自 PSTG 论文 <code>\cite{chen2026pstg}</code>。</p>
+
+<h3>14.2 评价指标</h3>
+
+<p>使用两个互补的指标，都基于 $F_{0.5}$ 分数（精确率的权重是召回率的 2 倍，因为误报的代价高于漏报）：</p>
+
+<h4>Event-wise F$_{0.5}$</h4>
+<p>对每个异常事件（连续的异常时间段），如果检测器在该时间段内触发了至少一次警报，就算这个事件被检出。然后计算精确率和召回率，合成 $F_{0.5}$。</p>
+<div class="card-info">
+  <strong>直观理解</strong>：这个指标奖励的是<strong>能不能在异常事件发生时及时报警</strong>，不关心报警持续多久，只要碰到就行。哪怕只报了一瞬间也算检出这个事件。
+</div>
+
+<h4>Affiliation F$_{0.5}$</h4>
+<p>对每个时间点，计算它到最近的异常事件边界的距离，基于距离给分。离异常边界越近的检测得分越高。</p>
+<div class="card-info">
+  <strong>直观理解</strong>：这个指标奖励的是<strong>整个异常持续期间都保持报警</strong>，而不仅仅是碰到边界。如果检测器在异常期间断断续续报警，Affiliation 分数就会低。
+</div>
+
+<h3>14.3 结果</h3>
+
+<table>
+<tr><th>方法</th><th>Event F$_{0.5}$</th><th>Affil. F$_{0.5}$</th></tr>
+<tr class="ours"><td><strong>SpCA (Ours)</strong></td><td class="best">0.934</td><td>0.853</td></tr>
+<tr><td>PSTG</td><td>0.917</td><td class="best">0.892</td></tr>
+<tr><td>PatchTST</td><td>0.894</td><td>0.891</td></tr>
+<tr><td>TimeFilter</td><td>0.835</td><td>0.869</td></tr>
+<tr><td>iTransformer</td><td>0.834</td><td>0.891</td></tr>
+<tr><td>WPMixer</td><td>0.806</td><td>0.856</td></tr>
+<tr><td>TSMixer</td><td>0.798</td><td>0.846</td></tr>
+<tr><td>FreTS</td><td>0.764</td><td>0.849</td></tr>
+<tr><td>Crossformer</td><td>0.418</td><td>0.811</td></tr>
+<tr><td>DLinear</td><td>0.394</td><td>0.767</td></tr>
+</table>
+
+<h3>14.4 结果分析</h3>
+
+<p><strong>Event-wise 上赢</strong>：SpCA 的 0.934 > PSTG 的 0.917。频域分解能敏锐捕捉到异常发生时高频成分的突变，对起始点检测特别有效。Event-wise 指标只要求碰到异常事件就算检出，所以这种"敏锐但可能不持续"的检测方式正好契合。</p>
+
+<p><strong>Affiliation 上输</strong>：SpCA 的 0.853 < PSTG 的 0.892。PSTG 的时序图建模在维持整个异常期间的持续对齐方面有优势。Affiliation 奖励的是异常期间持续报警，PSTG 的动态图能跟踪异常的演化过程。</p>
+
+<p><strong>超越频率感知基线</strong>：SpCA 不仅超越了一般方法，也超越了同样利用频域信息的 FreTS (0.764) 和 WPMixer (0.806)。说明光有频域分解不够，必须配合通道注意力才能发挥效果。</p>
+</section>
+
+<!-- ===== ABLATION ===== -->
+<section id="ablation">
+<h2>15. 消融实验</h2>
+
+<p>逐步去掉 SpCA 的两个核心组件，观察性能变化：</p>
+
+<table>
+<tr><th>变体</th><th>Event F$_{0.5}$</th><th>Affil. F$_{0.5}$</th><th>Event 变化</th></tr>
+<tr class="ours"><td><strong>SpCA (Full)</strong></td><td class="best">0.934</td><td class="best">0.853</td><td>—</td></tr>
+<tr><td>w/o 频带分解</td><td>0.872</td><td>0.715</td><td style="color:var(--red)">↓ 0.062</td></tr>
+<tr><td>w/o 通道注意力</td><td>0.931</td><td>0.835</td><td style="color:var(--orange)">↓ 0.003</td></tr>
+<tr><td>w/o 两者</td><td>0.872</td><td>0.701</td><td style="color:var(--red)">↓ 0.062</td></tr>
+</table>
+
+<h3>关键发现</h3>
+
+<div class="card">
+<p><strong>发现 1：频带分解是性能的主要驱动者。</strong></p>
+<p>去掉频带分解后，Event F$_{0.5}$ 从 0.934 暴跌到 0.872，掉了 6.2 个百分点。这证实了核心假设——频域分解是 SpCA 有效的主要原因。</p>
+</div>
+
+<div class="card">
+<p><strong>发现 2：通道注意力单独几乎无效。</strong></p>
+<p>去掉通道注意力（只保留频带分解），Event F$_{0.5}$ 只从 0.934 微降到 0.931，几乎没变。说明 CCA 在没有频带分解的情况下，不能独立提供 Event-wise 检测能力的提升。</p>
+</div>
+
+<div class="card">
+<p><strong>发现 3：CCA 在频带分解基础上提供互补增益。</strong></p>
+<p>对比"w/o 频带分解"（0.715）和"w/o 两者"（0.701），Affiliation F$_{0.5}$ 差了 0.014。说明 CCA 虽然对 Event-wise 贡献微小，但对 Affiliation（持续对齐能力）有正向贡献。频带分解和 CCA 是互补关系：频带分解负责敏锐的异常捕捉，CCA 负责维持持续的检测状态。</p>
+</div>
+
+<div class="card">
+<p><strong>发现 4：w/o 频带分解 ≈ w/o 两者。</strong></p>
+<p>两者 Event F$_{0.5}$ 完全一样（0.872），进一步证明 CCA 在没有频带分解时是"附庸"——它依赖频带分解提供好的特征输入才能发挥作用。</p>
+</div>
+</section>
+
+<!-- ===== SMAP ===== -->
+<section id="smap">
+<h2>16. 实验二：SMAP 数据集与评测协议</h2>
+
+<h3>16.1 数据集</h3>
+<p><strong>SMAP</strong> <code>\cite{hundman2018}</code>：NASA 火星探测器遥测数据，55 个通道，异常率 12.8%。这是航天器异常检测最常用的公开基准。</p>
+
+<h3>16.2 评测协议的关键问题</h3>
+
+<div class="card-warn">
+  <strong>SMAP 上的评测协议陷阱</strong>：大量已发表论文使用 <strong>best-F1 阈值</strong>——遍历所有阈值选最优，这需要测试集标签，是信息泄漏。在这种协议下，Anomaly Transformer 报 0.892，GDN 报 0.852。但这些数字被高估了。
+</div>
+
+<p>SpCA 使用<strong> POT 无泄漏阈值</strong>。在同样的严格协议下重新评测：</p>
+
+<table>
+<tr><th>方法</th><th>F1 (%)</th><th>评测协议</th></tr>
+<tr><td>Anomaly Transformer</td><td>89.2</td><td style="color:var(--red)">best-F1 (泄漏)</td></tr>
+<tr><td>GDN</td><td>85.2</td><td style="color:var(--red)">best-F1 (泄漏)</td></tr>
+<tr style="border-top:2px solid var(--border)"><td>GDN</td><td>10.43</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr><td>DTrans</td><td>22.91</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr><td>FuSAG</td><td>28.37</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr><td>MemStream</td><td>36.00</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr><td>Catch</td><td>69.08</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr><td>MSHTrans</td><td>69.95</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr><td>ContrastAD</td><td class="best">70.04</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+<tr class="ours"><td><strong>SpCA (Ours)</strong></td><td class="best">70.00</td><td style="color:var(--green)">POT (无泄漏)</td></tr>
+</table>
+<p class="dim">基线数字来自 ContrastAD 论文 <code>\cite{pei2026}</code>，均在无泄漏协议下评测</p>
+
+<h3>16.3 结果分析</h3>
+
+<p>SpCA 在无泄漏协议下达到 F1=0.700（P=0.618, R=0.809），与最好的 ContrastAD (0.7004) 持平。同一模型 GDN 从 0.852（best-F1）暴跌到 0.104（POT），说明 best-F1 的 0.852 绝大部分来自信息泄漏而非模型能力。</p>
+
+<p>SpCA 的高召回率（0.809）说明它检出了大部分异常。精确率较低（0.618）说明有一些误报，这是 POT 无泄漏阈值的固有代价——不偷看测试集标签就难免阈值设得保守。</p>
+</section>
+
+<!-- ===== EFFICIENCY ===== -->
+<section id="efficiency">
+<h2>17. 计算效率分析</h2>
+
+<h3>17.1 复杂度对比</h3>
+
+<table>
+<tr><th></th><th>PSTG</th><th>SpCA</th></tr>
+<tr><td>注意力 token</td><td>$C \times N$ (通道×patch)</td><td>$C$ (通道)</td></tr>
+<tr><td>注意力复杂度</td><td>$O(C^2 N^2 D)$</td><td>$O(C^2 D)$</td></tr>
+<tr><td>额外开销</td><td>—</td><td>$O(CL \log L)$ (FFT)</td></tr>
+<tr><td>参数量</td><td>~2.3M</td><td>~2.3M</td></tr>
+</table>
+
+<h3>17.2 具体数字</h3>
+
+<table>
+<tr><th>数据集</th><th>$C$</th><th>$N$</th><th>PSTG 注意力对</th><th>SpCA 注意力对</th><th>减少倍数</th></tr>
+<tr><td>SMAP</td><td>55</td><td>10</td><td>302,500</td><td>3,025</td><td class="best">100×</td></tr>
+<tr><td>ESA-AD</td><td>6</td><td>10</td><td>3,600</td><td>36</td><td class="best">100×</td></tr>
+</table>
+
+<p>FFT/irFFT 的额外开销：$O(CL \log L)$，对 $L=250$ 约 $6 \times 250 \times 8 \approx 12{,}000$ 次运算（ESA-AD），远小于注意力的节省。</p>
+
+<h3>17.3 意义</h3>
+<div class="card-tip">
+  参数量相近但注意力计算量减少 100 倍，意味着在<strong>推理速度和内存占用</strong>上有巨大优势。对于需要在地面站实时处理遥测数据、或在星载计算平台（资源严重受限）上部署的场景，这个效率提升是实质性的。
+</div>
+</section>
+
+<!-- ===== CONCLUSION ===== -->
+<section id="conclusion">
+<h2>18. 总结</h2>
+
+<div class="card">
+<h3 style="margin-top:0">核心贡献</h3>
+<ol>
+  <li><strong>架构创新</strong>：用 FFT 频带分解替代图建模，用通道注意力替代图注意力，注意力复杂度从 $O(C^2 N^2 D)$ 降到 $O(C^2 D)$</li>
+  <li><strong>性能验证</strong>：ESA-AD 上 Event F$_{0.5}$=0.934 超越 PSTG；SMAP 上 F1=0.700 匹配最优无泄漏结果</li>
+  <li><strong>评测规范</strong>：揭示了 SMAP 上 best-F1 协议的信息泄漏问题，在严格无泄漏协议下重新评测</li>
+</ol>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">消融结论</h3>
+<p>频带分解是性能的主要驱动者（去掉掉 6.2 个百分点），通道注意力在频带分解基础上提供互补增益（主要在持续对齐能力上）。两者缺一不可，但频带分解是根基。</p>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">效率优势</h3>
+<p>参数量相近（~2.3M），注意力对数减少 100 倍，适合资源受限的航天器部署场景。FFT 额外开销可忽略不计。</p>
+</div>
+
+<div class="card">
+<h3 style="margin-top:0">局限与权衡</h3>
+<p>Affiliation F$_{0.5}$ 不如 PSTG（0.853 vs 0.892），说明频域分解在异常持续期间的对齐能力不如时序图建模。这是精度与效率之间的权衡——SpCA 牺牲了一部分持续对齐能力，换取了 100 倍的计算效率提升。</p>
+</div>
+</section>
+
+<footer>
+  SpCA: Spectral Channel Attention Network for Spacecraft Telemetry Anomaly Detection<br>
+  详细技术解读 | 生成于 2026 年
+</footer>
+
+</div>
+</body>
+</html>

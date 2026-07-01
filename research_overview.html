@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>航天器遥测异常检测研究：SpCA</title>
+<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --primary: #1a4f8a;
+    --accent:  #e74c3c;
+    --green:   #27ae60;
+    --light:   #f8f9fa;
+    --border:  #dee2e6;
+    --text:    #2c3e50;
+    --muted:   #6c757d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--text); background: #fff; line-height: 1.75;
+  }
+  /* ── 布局 ── */
+  .hero {
+    background: linear-gradient(135deg, #0d2137 0%, #1a4f8a 60%, #2980b9 100%);
+    color: #fff; padding: 72px 40px 60px; text-align: center;
+  }
+  .hero h1 { font-size: 2.4rem; font-weight: 700; margin-bottom: 12px; }
+  .hero .subtitle { font-size: 1.1rem; opacity: 0.85; max-width: 700px; margin: 0 auto 24px; }
+  .badge {
+    display: inline-block; background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.4); border-radius: 20px;
+    padding: 4px 14px; font-size: 0.85rem; margin: 4px;
+  }
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--primary); display: flex; flex-wrap: wrap;
+    padding: 0 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
+  nav a {
+    color: rgba(255,255,255,0.85); text-decoration: none;
+    padding: 14px 16px; font-size: 0.9rem; transition: all 0.2s;
+  }
+  nav a:hover { color: #fff; background: rgba(255,255,255,0.1); }
+  .container { max-width: 960px; margin: 0 auto; padding: 48px 24px; }
+  section { margin-bottom: 64px; }
+  h2 {
+    font-size: 1.8rem; font-weight: 700; color: var(--primary);
+    border-left: 5px solid var(--primary); padding-left: 16px;
+    margin-bottom: 28px;
+  }
+  h3 { font-size: 1.25rem; font-weight: 600; color: var(--text); margin: 28px 0 12px; }
+  h4 { font-size: 1.05rem; font-weight: 600; color: var(--primary); margin: 20px 0 8px; }
+  p { margin-bottom: 14px; }
+  /* ── 卡片 ── */
+  .card {
+    background: var(--light); border: 1px solid var(--border);
+    border-radius: 10px; padding: 24px 28px; margin: 20px 0;
+  }
+  .card-row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .card-row .card { flex: 1; min-width: 240px; }
+  .highlight {
+    background: #fff8e1; border-left: 4px solid #f39c12;
+    padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0;
+  }
+  .insight {
+    background: #e8f4fd; border-left: 4px solid var(--primary);
+    padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0;
+  }
+  /* ── 公式 ── */
+  .formula-box {
+    background: #1e1e2e; color: #cdd6f4; border-radius: 8px;
+    padding: 20px 24px; margin: 16px 0; overflow-x: auto;
+    font-family: "Courier New", monospace; font-size: 0.95rem;
+  }
+  .formula-box .MathJax { color: #cdd6f4 !important; }
+  .formula-label {
+    font-size: 0.8rem; color: #6c7086; margin-bottom: 8px;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  /* ── 表格 ── */
+  table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.92rem; }
+  th {
+    background: var(--primary); color: #fff;
+    padding: 12px 16px; text-align: left; font-weight: 600;
+  }
+  td { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  tr:nth-child(even) td { background: var(--light); }
+  tr:hover td { background: #e8f4fd; }
+  .best { font-weight: 700; color: var(--primary); }
+  .ours { background: #fff8e1 !important; font-weight: 600; }
+  /* ── 架构图 ── */
+  .arch-flow {
+    display: flex; align-items: center; gap: 0;
+    flex-wrap: wrap; margin: 24px 0; justify-content: center;
+  }
+  .arch-block {
+    background: #fff; border: 2px solid var(--primary);
+    border-radius: 8px; padding: 12px 16px; text-align: center;
+    min-width: 120px; font-size: 0.85rem; font-weight: 600;
+    color: var(--primary);
+  }
+  .arch-block.new { border-color: var(--accent); color: var(--accent); background: #fff5f5; }
+  .arch-block.shared { border-color: var(--green); color: var(--green); background: #f0fff4; }
+  .arch-arrow {
+    font-size: 1.4rem; color: var(--muted); padding: 0 8px;
+  }
+  /* ── 结果可视化 ── */
+  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 16px; margin: 20px 0; }
+  .metric-card {
+    text-align: center; padding: 20px; border-radius: 10px;
+    border: 1px solid var(--border); background: #fff;
+  }
+  .metric-card .val { font-size: 2.2rem; font-weight: 700; color: var(--primary); }
+  .metric-card .lbl { font-size: 0.82rem; color: var(--muted); margin-top: 4px; }
+  .metric-card.highlight-card { background: var(--primary); border-color: var(--primary); }
+  .metric-card.highlight-card .val,
+  .metric-card.highlight-card .lbl { color: #fff; }
+  /* ── 消融图 ── */
+  .ablation-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .ablation-row:last-child { border-bottom: none; }
+  .ablation-label { width: 220px; font-size: 0.9rem; flex-shrink: 0; }
+  .ablation-bar-wrap { flex: 1; background: #eee; border-radius: 4px; height: 22px; position: relative; }
+  .ablation-bar {
+    height: 100%; border-radius: 4px;
+    background: var(--primary); transition: width 0.5s;
+    display: flex; align-items: center; justify-content: flex-end;
+    padding-right: 8px; color: #fff; font-size: 0.78rem; font-weight: 600;
+  }
+  .ablation-bar.best { background: var(--accent); }
+  /* ── 比较图 ── */
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media(max-width:600px){ .compare-grid{grid-template-columns:1fr;} }
+  .tag {
+    display: inline-block; padding: 2px 10px; border-radius: 12px;
+    font-size: 0.78rem; font-weight: 600; margin-left: 8px;
+  }
+  .tag-new { background: #ffe0e0; color: var(--accent); }
+  .tag-shared { background: #e0f0e8; color: var(--green); }
+  code {
+    background: #f1f3f5; padding: 1px 6px; border-radius: 4px;
+    font-family: "Courier New", monospace; font-size: 0.88em;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+<div class="hero">
+  <h1>频谱通道注意力网络<br>用于航天器遥测异常检测</h1>
+  <p class="subtitle">
+    SpCA：以 FFT 频段分解替代多尺度 Patch，以跨通道注意力替代动态图，
+    在 ESA-AD 数据集上达到 Event-wise F<sub>0.5</sub>=0.934，超越 PSTG 等9个基准方法
+  </p>
+  <span class="badge">ESA-AD</span>
+  <span class="badge">SMAP</span>
+  <span class="badge">异常检测</span>
+  <span class="badge">图注意力替代</span>
+  <span class="badge">频域建模</span>
+</div>
+
+<nav>
+  <a href="#background">背景</a>
+  <a href="#related">相关工作</a>
+  <a href="#problem">问题定义</a>
+  <a href="#method">SpCA 方法</a>
+  <a href="#experiment">实验设置</a>
+  <a href="#results">主要结果</a>
+  <a href="#ablation">消融分析</a>
+  <a href="#mta">MTA 对比</a>
+  <a href="#conclusion">结论</a>
+</nav>
+
+<div class="container">
+
+<!-- ═══════════════════════════════ 背景 ═══════════════════════════════ -->
+<section id="background">
+<h2>1. 研究背景</h2>
+
+<p>
+现代在轨航天器持续产生多通道遥测数据——温度、电压、电流、姿态角等传感器每分钟采集数百个参数。
+以 ESA 欧洲空间局的在轨卫星为例，一个子系统在 84 个月的在轨期间可产生超过 <strong>700 万个时间步</strong>的多变量时序数据。
+</p>
+
+<p>
+对地面站操作员而言，从如此体量的数据中<strong>及时、准确地发现异常</strong>是保障任务成功的关键。
+然而人工巡检成本极高，且极易漏检持续时间短、幅度微弱的异常事件。
+</p>
+
+<div class="card-row">
+  <div class="card">
+    <h4>🛰️ 任务背景</h4>
+    <p>ESA-AD Mission 1 数据集：6个遥测通道、165个月采集、29个真实在轨异常事件，
+    全部来自欧洲航天局真实在轨任务。</p>
+  </div>
+  <div class="card">
+    <h4>⚠️ 核心挑战</h4>
+    <p>异常率仅 0.4%（极稀疏）；通道间存在复杂物理耦合；异常形态多样（点异常、子序列异常）。</p>
+  </div>
+  <div class="card">
+    <h4>🎯 目标指标</h4>
+    <p>Event-wise F<sub>0.5</sub>（精确率权重更高，减少误报对操作员的干扰）和
+    Affiliation F<sub>0.5</sub>（时间边界对齐质量）。</p>
+  </div>
+</div>
+
+<div class="highlight">
+  <strong>为什么 F<sub>0.5</sub> 而非 F<sub>1</sub>？</strong><br>
+  在航天器运营场景中，每一次虚警都需要地面站人员响应，消耗宝贵的通信带宽和专家时间。
+  F<sub>0.5</sub> 对精确率的权重是召回率的 4 倍，与运营成本结构一致：
+  \( F_{0.5} = \frac{1.25 \cdot P \cdot R}{0.25P + R} \)
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 相关工作 ═══════════════════════════════ -->
+<section id="related">
+<h2>2. 相关工作</h2>
+
+<h3>2.1 预测残差范式（Prediction-based）</h3>
+<p>
+主流方法的基本框架：训练模型在正常数据上学习预测未来时间步，测试时若预测误差超过阈值则标记为异常。
+</p>
+
+<div class="card">
+<table>
+  <tr><th>方法</th><th>核心设计</th><th>ESA-AD Event F0.5</th><th>局限</th></tr>
+  <tr><td><strong>Telemanom</strong><br>(Hundman et al., KDD'18)</td><td>LSTM + 动态阈值</td><td>—</td><td>单通道，忽略通道间依赖</td></tr>
+  <tr><td><strong>PSTG</strong><br>(Chen et al., Entropy'26)</td><td>多尺度Patch嵌入 + 渐进时空图</td><td>0.917</td><td>图构建复杂，依赖精确未来预测</td></tr>
+  <tr><td><strong>PatchTST</strong><br>(Nie et al., ICLR'23)</td><td>Patch Transformer，通道独立</td><td>0.894</td><td>无显式通道建模</td></tr>
+  <tr><td><strong>iTransformer</strong><br>(Liu et al., ICLR'24)</td><td>倒置注意力，时序为特征</td><td>0.834</td><td>全局混合，多尺度能力弱</td></tr>
+  <tr><td><strong>DLinear / TSMixer / FreTS…</strong></td><td>各类轻量预测骨干</td><td>0.394–0.806</td><td>精确率普遍偏低</td></tr>
+</table>
+</div>
+
+<h3>2.2 现有方法的共同瓶颈</h3>
+<div class="card-row">
+  <div class="card">
+    <h4>瓶颈 A：图构建复杂度</h4>
+    <p>PSTG 通过动态邻接矩阵学习通道关系，需要计算 \(n \times n\) 的注意力矩阵（\(n=C\times N=60\)），
+    引入大量参数和计算开销。</p>
+  </div>
+  <div class="card">
+    <h4>瓶颈 B：时序特征提取</h4>
+    <p>PSTG 的多尺度 Patch 仅从时域切片，未充分利用遥测信号的<strong>强周期性</strong>——
+    轨道周期、热循环等物理现象在频域有更自然的表达。</p>
+  </div>
+</div>
+
+<div class="insight">
+  <strong>研究动机：</strong>能否用更轻量、更直觉的方式同时解决这两个瓶颈？
+  FFT 频段分解天然捕捉周期性，Cross-Channel Attention 比动态图更简洁地建模通道依赖。
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 问题定义 ═══════════════════════════════ -->
+<section id="problem">
+<h2>3. 问题定义</h2>
+
+<p>
+给定多变量遥测时序 \(\mathbf{X} \in \mathbb{R}^{C \times T}\)，
+其中 \(C=6\) 为通道数，\(T\) 为总时间步数（ESA-AD 约 700 万步），
+目标是为测试集中每个时间步 \(t\) 赋予异常分数 \(s_t \in \mathbb{R}\)，
+使真实异常区域对应高分。
+</p>
+
+<p>
+具体地，在长度为 \(L=250\) 的上下文窗口 \(\mathbf{X}_{t-L:t}\) 下，
+模型预测未来 \(F=10\) 步 \(\hat{\mathbf{X}}_{t:t+F}\)，
+异常分数定义为预测残差：\(s_t = \|\mathbf{X}_{t:t+F} - \hat{\mathbf{X}}_{t:t+F}\|\)。
+</p>
+
+<div class="card">
+  <h4>评估协议</h4>
+  <p>
+  遵循 PSTG 论文的协议，使用 <strong>Standard 1</strong>（全部 33 个标注事件）和
+  <strong>Standard 2</strong>（duration≥2 的 24 个事件）两套协议，
+  均不使用 Point Adjustment（PA），避免指标虚高。
+  </p>
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 方法 ═══════════════════════════════ -->
+<section id="method">
+<h2>4. SpCA 方法</h2>
+
+<p>
+SpCA（Spectral Channel Attention Network）的整体流程如下：
+</p>
+
+<div class="arch-flow">
+  <div class="arch-block">输入 X<br>[B, C, L]</div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-block new">FFT 频段分解</div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-block new">频段投影</div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-block new">跨通道注意力</div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-block new">频段融合</div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-block shared">预测头</div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-block">X̂ [B, C, F]</div>
+</div>
+<p style="font-size:0.85rem;color:var(--muted);text-align:center;margin-top:-8px">
+  <span style="color:var(--accent)">■</span> 新模块（SpCA 独有）&nbsp;&nbsp;
+  <span style="color:var(--green)">■</span> 与 PSTG 类似的标准组件
+</p>
+
+<!-- 4.1 频段分解 -->
+<h3>4.1 频谱频段分解（Spectral Band Decomposer）</h3>
+<p>
+航天器遥测信号具有强周期性：轨道周期（约90分钟）、热循环、操作周期等在频域有明确对应。
+SpCA 利用 FFT 将输入信号分解为三个频段，每个频段独立捕捉不同时间尺度的模式。
+</p>
+
+<h4>原理</h4>
+<p>
+对输入 \(\mathbf{X} \in \mathbb{R}^{B \times C \times L}\) 沿时间轴做实数 FFT：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">快速傅里叶变换</div>
+  \[\mathbf{X}_{\text{freq}} = \text{RFFT}(\mathbf{X}, \text{dim}=-1) \in \mathbb{C}^{B \times C \times (L/2+1)}\]
+</div>
+
+<p>
+总频率 bin 数 \(N = L/2+1 = 126\)，按相对 Nyquist 频率的比例分为三段：
+</p>
+
+<div class="card">
+<table>
+  <tr><th>频段</th><th>频率范围</th><th>Bin 范围</th><th>物理含义</th></tr>
+  <tr><td><strong>低频段</strong></td><td>[0, 10% Nyquist)</td><td>bin 0–12</td><td>长周期趋势：轨道热循环、季节漂移</td></tr>
+  <tr><td><strong>中频段</strong></td><td>[10%, 40% Nyquist)</td><td>bin 13–50</td><td>操作性周期变化：姿态机动、充放电</td></tr>
+  <tr><td><strong>高频段</strong></td><td>[40%, 100% Nyquist]</td><td>bin 51–125</td><td>短时波动：测量噪声、瞬态响应</td></tr>
+</table>
+</div>
+
+<p>
+对每个频段，将对应 bin 之外的频率系数置零，再做逆 FFT 还原为时域：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">频段分解（第 k 个频段）</div>
+  \[\mathbf{B}_k = \text{IRFFT}\bigl(\mathbf{X}_{\text{freq}} \odot \mathbf{M}_k,\; n=L\bigr) \in \mathbb{R}^{B \times C \times L}\]
+  <br>
+  其中 \(\mathbf{M}_k \in \{0,1\}^{L/2+1}\) 为第 \(k\) 频段的频率掩码，仅对应范围的 bin 为 1。
+</div>
+
+<div class="insight">
+  <strong>为什么用 IRFFT 还原时域而非直接用频谱特征？</strong><br>
+  还原为时域信号后，每个频段仍然是与原始信号同维度的时序，
+  便于后续使用统一的线性投影层处理，且保留了时间轴上的相位信息（异常的时间位置）。
+</div>
+
+<!-- 4.2 频段投影 -->
+<h3>4.2 频段投影（Band Projection）</h3>
+<p>
+每个频段的时域信号 \(\mathbf{B}_k \in \mathbb{R}^{B \times C \times L}\) 通过独立的线性层
+压缩为 \(D=192\) 维嵌入：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">Band Projection</div>
+  \[\mathbf{Z}_k = \text{LayerNorm}\bigl(\mathbf{W}_k \mathbf{B}_k + \mathbf{b}_k\bigr)
+  \in \mathbb{R}^{B \times C \times D}, \quad k=1,2,3\]
+  <br>
+  其中 \(\mathbf{W}_k \in \mathbb{R}^{D \times L}\) 为第 \(k\) 频段的可学习投影矩阵。
+</div>
+
+<p>
+三个频段使用<strong>独立的投影矩阵</strong>，使每个频段能学习适合自身频率特性的特征表示：
+低频段重点捕捉长周期趋势的均值偏移，高频段重点捕捉突发脉冲的幅度变化。
+</p>
+
+<!-- 4.3 跨通道注意力 -->
+<h3>4.3 跨通道注意力（Cross-Channel Attention）</h3>
+<p>
+这是 SpCA 与 PSTG 最核心的架构差异。PSTG 使用动态图 + GATv2 建模通道关系，
+SpCA 改用标准的多头自注意力机制——将 \(C=6\) 个通道视为序列中的 6 个 token，
+让每个通道关注其他所有通道的特征。
+</p>
+
+<h4>与 PSTG 图机制的对比</h4>
+<div class="card-row">
+  <div class="card">
+    <h4>PSTG：动态图 + GATv2</h4>
+    <p>
+    构造 \(n \times n\) 邻接矩阵（\(n=C \times N=60\)），
+    通过 Top-k 稀疏化和结构引导注意力传播信息。
+    </p>
+    <p><strong>参数量：</strong>约 2.33M &nbsp; <strong>计算：</strong>\(O(n^2)\)</p>
+  </div>
+  <div class="card">
+    <h4>SpCA：Cross-Channel Attention</h4>
+    <p>
+    将 \(C=6\) 个通道直接作为 token，做 \(C \times C=36\) 对注意力。
+    不需要显式构造图，权重由数据自适应学习。
+    </p>
+    <p><strong>参数量：</strong>约 2.37M &nbsp; <strong>计算：</strong>\(O(C^2)\)</p>
+  </div>
+</div>
+
+<h4>注意力计算</h4>
+<p>
+对嵌入 \(\mathbf{Z}_k \in \mathbb{R}^{B \times C \times D}\)，
+将 C=6 维作为序列长度，D=192 维作为特征维度，做多头自注意力：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">多头自注意力（H=4 头）</div>
+  \[\text{Attention}(\mathbf{Q},\mathbf{K},\mathbf{V}) = \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_k}}\right)\mathbf{V}\]
+  <br>
+  \[\mathbf{Q} = \mathbf{Z}_k \mathbf{W}^Q, \quad \mathbf{K} = \mathbf{Z}_k \mathbf{W}^K, \quad \mathbf{V} = \mathbf{Z}_k \mathbf{W}^V\]
+  <br>
+  其中 \(\mathbf{W}^Q, \mathbf{W}^K, \mathbf{W}^V \in \mathbb{R}^{D \times D}\)，
+  \(d_k = D/H = 48\)（每头维度）。
+</div>
+
+<p>
+注意力分数 \(A_{ij}\) 表示第 \(i\) 个通道对第 \(j\) 个通道的关注程度，
+高分意味着两通道在该频段存在强耦合，模型据此在通道间传播信息。
+</p>
+
+<p>注意力块包含 Pre-LN 归一化和 FFN：</p>
+<div class="formula-box">
+  <div class="formula-label">Transformer Block（Pre-LN）</div>
+  \[\mathbf{Z}' = \text{LayerNorm}(\mathbf{Z}_k + \text{MHA}(\mathbf{Z}_k))\]
+  \[\mathbf{Z}'' = \text{LayerNorm}(\mathbf{Z}' + \text{FFN}(\mathbf{Z}'))\]
+  <br>
+  \[\text{FFN}(\mathbf{x}) = \mathbf{W}_2 \cdot \text{GELU}(\mathbf{W}_1 \mathbf{x}), \quad \mathbf{W}_1 \in \mathbb{R}^{4D \times D}\]
+</div>
+
+<div class="insight">
+  <strong>为什么 C=6 的小通道数特别适合纯 Attention？</strong><br>
+  注意力计算的复杂度为 \(O(C^2)\)。C=6 时只需计算 36 对注意力，参数量和计算量极小，
+  模型能充分学习 6 个通道之间的所有两两关系，无需图的稀疏化近似。
+</div>
+
+<!-- 4.4 频段融合 -->
+<h3>4.4 频段融合（Spectral Fusion）</h3>
+<p>
+三个频段各自经过注意力处理后，用可学习的标量权重加权融合：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">可学习频段融合</div>
+  \[\mathbf{Z}_{\text{fused}} = \sum_{k=1}^{3} \alpha_k \mathbf{Z}''_k, \quad
+  \alpha_k = \frac{\exp(w_k)}{\sum_{j=1}^{3}\exp(w_j)}\]
+  <br>
+  其中 \(w_1, w_2, w_3 \in \mathbb{R}\) 为可学习标量，通过 Softmax 归一化。
+</div>
+
+<p>
+这使模型能自适应地学习每个频段对当前任务的贡献权重：
+若遥测信号以低频趋势漂移型异常为主，则 \(\alpha_1\) 会更大；
+若以高频瞬态异常为主，则 \(\alpha_3\) 更大。
+</p>
+
+<p>
+融合后再经过全局跨通道注意力（n_layers_global=2 层）进一步精炼：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">全局跨通道精炼</div>
+  \[\mathbf{H} = \text{CCA}^{(2)}\bigl(\text{CCA}^{(1)}(\mathbf{Z}_{\text{fused}})\bigr) \in \mathbb{R}^{B \times C \times D}\]
+</div>
+
+<!-- 4.5 预测与检测 -->
+<h3>4.5 预测头与异常检测</h3>
+
+<h4>预测</h4>
+<div class="formula-box">
+  <div class="formula-label">线性预测头</div>
+  \[\hat{\mathbf{X}} = \mathbf{W}_{\text{out}} \mathbf{H} + \mathbf{b}_{\text{out}}
+  \in \mathbb{R}^{B \times C \times F}, \quad \mathbf{W}_{\text{out}} \in \mathbb{R}^{F \times D}\]
+</div>
+
+<h4>复合损失函数</h4>
+<div class="formula-box">
+  <div class="formula-label">训练损失（MSE + 频域 + 形态）</div>
+  \[\mathcal{L} = \mathcal{L}_{\text{MSE}} + \lambda_1 \mathcal{L}_{\text{freq}} + \lambda_2 \mathcal{L}_{\text{shape}}\]
+  <br>
+  \[\mathcal{L}_{\text{MSE}} = \|\hat{\mathbf{X}} - \mathbf{X}_{\text{future}}\|_F^2\]
+  <br>
+  \[\mathcal{L}_{\text{freq}} = \|\mathcal{F}(\hat{\mathbf{X}}) - \mathcal{F}(\mathbf{X}_{\text{future}})\|_F^2\]
+  <br>
+  \[\mathcal{L}_{\text{shape}} = \|\nabla_t \hat{\mathbf{X}} - \nabla_t \mathbf{X}_{\text{future}}\|_F^2\]
+</div>
+
+<p>
+三项损失分别约束：逐点精度（MSE）、频谱结构（freq）、局部趋势（shape），
+使模型学到既准确又保持波形形态的预测。
+</p>
+
+<h4>异常检测：动态阈值（POT）</h4>
+<p>
+测试时，预测残差经均值平滑（窗口 \(W_s=105\)）后，
+用 POT（Peaks Over Threshold，极值理论）自动确定异常阈值 \(\varepsilon^*\)：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">POT 阈值估计（Siffer et al., KDD'17）</div>
+  \[\varepsilon^* = u + \frac{\sigma}{\gamma}\left[\left(\frac{\alpha n}{N_t}\right)^{-\gamma} - 1\right]\]
+  <br>
+  超过初始阈值 \(u\) 的残差超量 \(Y = r - u\) 近似服从广义帕累托分布（GPD）：
+  参数 \(\gamma\)（形状）、\(\sigma\)（尺度）用 MLE 拟合，
+  \(\alpha\) 为目标超阈率（默认 \(4\times10^{-3}\)），\(N_t\) 为超阈样本数。
+</div>
+
+<div class="insight">
+  <strong>POT 的优势：</strong>
+  不假设正态分布，直接对残差尾部分布建模，能自适应地为不同模型和数据集确定合理阈值，
+  无需在测试集上搜索最优阈值（避免信息泄露）。
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 实验设置 ═══════════════════════════════ -->
+<section id="experiment">
+<h2>5. 实验设置</h2>
+
+<div class="card-row">
+  <div class="card">
+    <h4>数据集</h4>
+    <p><strong>ESA-AD Mission 1</strong>（主）</p>
+    <ul style="margin-left:18px;margin-top:8px">
+      <li>通道：41–46（子系统5，C=6）</li>
+      <li>训练：81个月（716K步）</li>
+      <li>测试：84个月（769万步）</li>
+      <li>异常率：0.41%，24个事件（Standard 2）</li>
+    </ul>
+    <p style="margin-top:12px"><strong>SMAP</strong>（补充）</p>
+    <ul style="margin-left:18px;margin-top:8px">
+      <li>25通道，427K测试步</li>
+      <li>异常率：12.8%</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h4>模型超参数</h4>
+    <table style="margin:0;font-size:0.87rem">
+      <tr><td>嵌入维度 D</td><td>192</td></tr>
+      <tr><td>注意力头数 H</td><td>4</td></tr>
+      <tr><td>频段数 K</td><td>3</td></tr>
+      <tr><td>频段分割点</td><td>(0.1, 0.4) Nyquist</td></tr>
+      <tr><td>每频段注意力层</td><td>1</td></tr>
+      <tr><td>全局注意力层</td><td>2</td></tr>
+      <tr><td>上下文长度 L</td><td>250</td></tr>
+      <tr><td>预测步长 F</td><td>10</td></tr>
+      <tr><td><strong>总参数量</strong></td><td><strong>2.37M</strong></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>训练配置</h4>
+    <table style="margin:0;font-size:0.87rem">
+      <tr><td>优化器</td><td>AdamW</td></tr>
+      <tr><td>学习率</td><td>5×10⁻⁴</td></tr>
+      <tr><td>权重衰减</td><td>4×10⁻⁴</td></tr>
+      <tr><td>学习率调度</td><td>Cosine Annealing</td></tr>
+      <tr><td>训练轮数</td><td>70 epochs</td></tr>
+      <tr><td>批大小</td><td>64</td></tr>
+      <tr><td>λ₁（频域）</td><td>0.1</td></tr>
+      <tr><td>λ₂（形态）</td><td>0.1</td></tr>
+      <tr><td>POT α</td><td>4×10⁻³</td></tr>
+    </table>
+  </div>
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 主要结果 ═══════════════════════════════ -->
+<section id="results">
+<h2>6. 主要实验结果</h2>
+
+<h3>6.1 ESA-AD 主要结果</h3>
+
+<div class="metric-grid">
+  <div class="metric-card highlight-card">
+    <div class="val">0.934</div>
+    <div class="lbl">Event F₀.₅（Standard 1）</div>
+  </div>
+  <div class="metric-card highlight-card">
+    <div class="val">0.853</div>
+    <div class="lbl">Affil F₀.₅（Standard 1）</div>
+  </div>
+  <div class="metric-card">
+    <div class="val">0.968</div>
+    <div class="lbl">Event Precision</div>
+  </div>
+  <div class="metric-card">
+    <div class="val">2.37M</div>
+    <div class="lbl">参数量（≈PSTG）</div>
+  </div>
+</div>
+
+<h4>与基准方法完整对比（ESA-AD，Standard 1，33事件）</h4>
+<table>
+  <tr><th>方法</th><th>Ev. P</th><th>Ev. R</th><th>Ev. F₀.₅</th><th>Aff. F₀.₅</th></tr>
+  <tr class="ours">
+    <td><strong>SpCA（我们）</strong></td>
+    <td class="best">0.968</td>
+    <td>0.818</td>
+    <td class="best">0.934</td>
+    <td class="best">0.853</td>
+  </tr>
+  <tr><td>PSTG (Chen et al., 2026)</td><td>0.932</td><td>0.862</td><td>0.917</td><td>0.892</td></tr>
+  <tr><td>PatchTST</td><td>0.902</td><td>0.862</td><td>0.894</td><td>0.885</td></tr>
+  <tr><td>iTransformer</td><td>0.824</td><td>0.877</td><td>0.834</td><td>0.891</td></tr>
+  <tr><td>TimeFilter</td><td>0.832</td><td>0.846</td><td>0.835</td><td>0.869</td></tr>
+  <tr><td>WPMixer</td><td>0.796</td><td>0.846</td><td>0.806</td><td>0.856</td></tr>
+  <tr><td>TSMixer</td><td>0.805</td><td>0.846</td><td>0.798</td><td>0.846</td></tr>
+  <tr><td>FreTS</td><td>0.749</td><td>0.769</td><td>0.764</td><td>0.849</td></tr>
+  <tr><td>Crossformer</td><td>0.372</td><td>0.815</td><td>0.418</td><td>0.811</td></tr>
+  <tr><td>DLinear</td><td>0.347</td><td>0.846</td><td>0.394</td><td>0.767</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>SpCA 取得最高 Event Precision（0.968）和最高 Event F₀.₅（0.934），
+  超过 PSTG（0.917）。</strong>
+  高精确率意味着更少的虚警——每次误报都需要地面站操作员响应，
+  SpCA 在实际运营成本上有明显优势。
+</div>
+
+<h3>6.2 SMAP 泛化结果</h3>
+<p>
+为验证 SpCA 的跨数据集泛化能力，在 SMAP 卫星遥测数据集上额外评估。
+使用 POT 自动阈值（\(\alpha=0.08\)），采用文献通用的 F1 with Point Adjustment 协议：
+</p>
+
+<div class="card">
+  <table style="margin:0">
+    <tr><th>数据集</th><th>F1(PA)</th><th>Precision</th><th>Recall</th><th>评估协议</th></tr>
+    <tr class="ours"><td>SMAP</td><td class="best">0.700</td><td>0.618</td><td>0.809</td><td>POT + PA</td></tr>
+  </table>
+  <p style="margin-top:10px;font-size:0.88rem;color:var(--muted)">
+  注：部分文献（如 TranAD）报告 F1(PA)=0.89 但使用测试集最优阈值，
+  存在信息泄露。SpCA 使用 POT 自动阈值，无需访问测试标签。
+  参考：Kim et al. (2022) 指出 PA 协议在最优阈值下会严重虚高性能指标。
+  </p>
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 消融 ═══════════════════════════════ -->
+<section id="ablation">
+<h2>7. 消融分析</h2>
+
+<h3>7.1 组件消融（核心贡献验证）</h3>
+<p>
+为验证 FFT 频域分解和跨通道注意力各自的贡献，
+系统地去除每个组件后重新训练和评估：
+</p>
+
+<table>
+  <tr>
+    <th>模型变体</th>
+    <th>参数量</th>
+    <th>Std1 Ev. F₀.₅</th>
+    <th>Std1 Aff. F₀.₅</th>
+    <th>说明</th>
+  </tr>
+  <tr class="ours">
+    <td><strong>SpCA Full（完整）</strong></td>
+    <td>2.37M</td>
+    <td class="best">0.934</td>
+    <td class="best">0.853</td>
+    <td>频域分解 + 通道注意力</td>
+  </tr>
+  <tr>
+    <td>w/o Spectral Decomp</td>
+    <td>940K</td>
+    <td>0.872 <span style="color:var(--accent)">↓0.062</span></td>
+    <td>0.701</td>
+    <td>去掉FFT，直接线性投影</td>
+  </tr>
+  <tr>
+    <td>w/o Channel Attention</td>
+    <td>148K</td>
+    <td>0.931 <span style="color:var(--accent)">↓0.003</span></td>
+    <td>0.835</td>
+    <td>去掉注意力，通道独立处理</td>
+  </tr>
+  <tr>
+    <td>w/o Both（线性基线）</td>
+    <td>51K</td>
+    <td>0.872 <span style="color:var(--accent)">↓0.062</span></td>
+    <td>0.715</td>
+    <td>两者都去，退化为线性预测</td>
+  </tr>
+</table>
+
+<h4>Event F₀.₅（Standard 1）贡献可视化</h4>
+<div style="max-width:600px;margin:16px 0">
+  <div class="ablation-row">
+    <div class="ablation-label">SpCA Full（完整）</div>
+    <div class="ablation-bar-wrap">
+      <div class="ablation-bar best" style="width:93.4%">0.934</div>
+    </div>
+  </div>
+  <div class="ablation-row">
+    <div class="ablation-label">w/o Channel Attention</div>
+    <div class="ablation-bar-wrap">
+      <div class="ablation-bar" style="width:93.1%">0.931</div>
+    </div>
+  </div>
+  <div class="ablation-row">
+    <div class="ablation-label">w/o Spectral Decomp</div>
+    <div class="ablation-bar-wrap">
+      <div class="ablation-bar" style="width:87.2%">0.872</div>
+    </div>
+  </div>
+  <div class="ablation-row">
+    <div class="ablation-label">w/o Both（线性基线）</div>
+    <div class="ablation-bar-wrap">
+      <div class="ablation-bar" style="width:87.2%">0.872</div>
+    </div>
+  </div>
+</div>
+
+<div class="highlight">
+  <strong>关键发现：</strong>
+  <ul style="margin-left:20px;margin-top:8px">
+    <li><strong>频域分解贡献 +0.062 Event F₀.₅</strong>，是最主要的贡献来源。
+    去掉 FFT 后模型丢失了对单点异常（持续 1 步的异常）的检测能力，
+    Affil F₀.₅ 大幅下降（0.853→0.701）。</li>
+    <li><strong>通道注意力贡献 +0.003 Event F₀.₅</strong>（辅助贡献），
+    但对时间对齐质量（Affil）有更明显的改善（0.835→0.853，+0.018）。</li>
+    <li>w/o Both 退化为每通道独立线性预测器（类 DLinear），
+    虽然参数量仅 51K（SpCA 的 2%），但 Event F₀.₅ 低 0.062。</li>
+  </ul>
+</div>
+
+<h3>7.2 超参敏感性</h3>
+<table>
+  <tr><th>配置</th><th>Ev. F₀.₅</th><th>Aff. F₀.₅</th></tr>
+  <tr class="ours"><td><strong>N_BANDS=3, splits=(0.1,0.4)（默认）</strong></td><td class="best">0.934</td><td class="best">0.853</td></tr>
+  <tr><td>N_BANDS=2, splits=(0.4)</td><td>—</td><td>—</td></tr>
+  <tr><td>N_BANDS=4, splits=(0.1,0.4,0.6)</td><td>—</td><td>—</td></tr>
+  <tr><td>splits=(0.05,0.2)</td><td>—</td><td>—</td></tr>
+  <tr><td>splits=(0.2,0.5)</td><td>—</td><td>—</td></tr>
+</table>
+<p style="font-size:0.87rem;color:var(--muted)">注：超参敏感性实验正在进行中，数字待补充。</p>
+</section>
+
+<!-- ═══════════════════════════════ MTA ═══════════════════════════════ -->
+<section id="mta">
+<h2>8. 补充：掩码时间自编码器（MTA）</h2>
+<p>
+在 SpCA 的研究之外，我们同时探索了另一种异常检测范式——
+将预测范式（Prediction-based）替换为<strong>掩码自重建范式（Masked Reconstruction）</strong>，
+提出了 MTA（Masked Temporal Autoencoder）。
+</p>
+
+<div class="compare-grid">
+  <div class="card">
+    <h4>🔮 预测范式（PSTG / SpCA）</h4>
+    <p>\(\mathbf{X}_{t-L:t} \xrightarrow{\text{模型}} \hat{\mathbf{X}}_{t:t+F}\)</p>
+    <p>训练目标：准确预测未来步</p>
+    <p>异常信号：预测残差 \(|\hat{\mathbf{X}} - \mathbf{X}|\)</p>
+    <p>局限：预测精度随分布漂移下降</p>
+  </div>
+  <div class="card">
+    <h4>🎭 重建范式（MTA）</h4>
+    <p>\(\mathbf{X}_{\text{masked}} \xrightarrow{\text{模型}} \hat{\mathbf{X}}_{\text{masked}}\)</p>
+    <p>训练目标：重建随机掩码的时间片段</p>
+    <p>异常信号：重建误差（最近 k=3 个 patch）</p>
+    <p>优势：无需未来步监督</p>
+  </div>
+</div>
+
+<h3>MTA 架构</h3>
+<p>
+MTA 复用 PSTG 编码器（MultiScalePatchEmbedding + SpatioTemporalGraphLayer），
+新增轻量 MLP 解码器（参数开销 &lt;4%），并将训练目标改为掩码重建：
+</p>
+
+<div class="formula-box">
+  <div class="formula-label">掩码重建损失（仅对掩码位置计算）</div>
+  \[\mathcal{L}_{\text{MTA}} = \sum_{(c,i) \in \mathcal{M}}
+  \left(\|\hat{X}_{c,i} - X_{c,i}\|^2 + \lambda_1 \mathcal{L}^{c,i}_{\text{freq}} + \lambda_2 \mathcal{L}^{c,i}_{\text{shape}}\right)\]
+  <br>
+  其中 \(\mathcal{M}\) 为随机掩码位置集合，掩码比例 \(r=0.6\)（60% 时间片段被掩盖）。
+</div>
+
+<h3>MTA 在 ESA-AD 上的结果</h3>
+<table>
+  <tr><th>方法</th><th>Ev. P</th><th>Ev. R</th><th>Ev. F₀.₅</th><th>Aff. F₀.₅</th></tr>
+  <tr><td>PSTG (paper)</td><td>0.932</td><td>0.862</td><td>0.917</td><td>0.892</td></tr>
+  <tr class="ours"><td><strong>MTA（k=3）</strong></td><td><strong>0.950</strong></td><td>0.792</td><td>0.913</td><td>0.823</td></tr>
+  <tr><td>PatchTST</td><td>0.902</td><td>0.862</td><td>0.894</td><td>0.885</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>MTA 的独特优势：</strong>
+  Event Precision=0.950，所有方法中最高，且达到与 PSTG 相当的 Event F₀.₅（0.913 vs 0.917）。
+  这表明重建范式是预测范式的竞争性替代方案，而非仅是补充。
+</div>
+</section>
+
+<!-- ═══════════════════════════════ 结论 ═══════════════════════════════ -->
+<section id="conclusion">
+<h2>9. 结论与未来工作</h2>
+
+<h3>主要贡献</h3>
+<div class="card-row">
+  <div class="card">
+    <h4>① 新型编码架构</h4>
+    <p>提出用 FFT 频段分解替代多尺度 Patch 切分，
+    用 Cross-Channel Attention 替代动态图 + GATv2，
+    在保持相近参数量的同时实现更高 Event F₀.₅（0.934 vs PSTG 0.917）。</p>
+  </div>
+  <div class="card">
+    <h4>② 组件级消融验证</h4>
+    <p>系统验证了频域分解（+0.062 F₀.₅）和通道注意力（+0.003 F₀.₅）的独立贡献，
+    明确指出频域分解是主要贡献因子。</p>
+  </div>
+  <div class="card">
+    <h4>③ 跨数据集验证</h4>
+    <p>在 SMAP 卫星遥测数据集上验证泛化能力，
+    以 POT 自动阈值（无测试集泄露）达到 F1(PA)=0.700。</p>
+  </div>
+</div>
+
+<h3>局限性与未来工作</h3>
+<div class="card">
+  <ul style="margin-left:20px">
+    <li><strong>高通道数泛化：</strong>Cross-Channel Attention 在 C≫6 时（如 MSL 的 55 通道）效果下降，
+    引入通道压缩层是改进方向。</li>
+    <li><strong>Affiliation 边界精度：</strong>SpCA 的窗口级评分导致检测区间比真实异常稍宽，
+    Affil F₀.₅ 低于 PSTG（0.853 vs 0.892）。子 patch 重建或导数边界细化可改善此问题。</li>
+    <li><strong>频段分割的物理依据：</strong>当前频段分割点为固定超参，
+    未来可根据遥测信号的采样率和物理约束自适应确定。</li>
+  </ul>
+</div>
+
+<h3>参考文献（核心）</h3>
+<div class="card" style="font-size:0.88rem;line-height:1.8">
+  <p>[1] Z. Chen et al., "Progressive Spatiotemporal Graph Modeling for Spacecraft Anomaly Detection,"
+  <em>Entropy</em>, vol. 28, p. 426, 2026.</p>
+  <p>[2] K. Kotowski et al., "ESA Anomaly Dataset," Zenodo, 2024. DOI: 10.5281/zenodo.12528696</p>
+  <p>[3] A. Siffer et al., "Anomaly Detection in Streams with Extreme Value Theory," <em>KDD</em>, 2017.</p>
+  <p>[4] S. Kim et al., "Towards a Rigorous Evaluation of Time-Series Anomaly Detection," arXiv:2109.05257, 2022.</p>
+  <p>[5] K. He et al., "Masked Autoencoders Are Scalable Vision Learners," <em>CVPR</em>, 2022.</p>
+  <p>[6] Y. Nie et al., "A Time Series is Worth 64 Words," <em>ICLR</em>, 2023.</p>
+  <p>[7] Y. Liu et al., "iTransformer," <em>ICLR</em>, 2024.</p>
+</div>
+</section>
+
+</div><!-- /container -->
+
+<footer style="background:#1a4f8a;color:rgba(255,255,255,0.7);text-align:center;padding:24px;font-size:0.85rem">
+  SpCA · 航天器遥测异常检测研究 · ESA-AD Mission 1 · 2026
+</footer>
+
+</body>
+</html>
