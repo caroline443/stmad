@@ -47,10 +47,33 @@ OUT_DIR.mkdir(exist_ok=True)
 #  图 1：异常分数分布
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _load_y_true(eval_dir: Path) -> np.ndarray:
+    """加载 y_true，优先从 eval_dir，不存在则从 data_cache 推算"""
+    y_path = eval_dir / "y_true.npy"
+    if y_path.exists():
+        return np.load(y_path).astype(np.int32)
+    # 回退：从 checkpoints_spca/data_cache 或 checkpoints_ab_*/data_cache 找
+    for cache in [
+        Path("checkpoints_spca/data_cache"),
+        Path("checkpoints_ab_full/data_cache"),
+        Path("checkpoints/data_cache"),
+    ]:
+        lbl = cache / "test_labels.npy"
+        if lbl.exists():
+            labels = np.load(lbl).astype(np.int32)
+            raw = np.load(eval_dir / "raw_smoothed.npy")
+            # 裁剪到与 raw_smoothed 相同的长度（从第 L=250 步开始）
+            return labels[250 : 250 + len(raw)]
+    raise FileNotFoundError(
+        f"找不到 y_true.npy，也找不到 data_cache。\n"
+        f"请先重新运行 evaluate_spca.py（已更新会自动保存 y_true.npy）。"
+    )
+
+
 def fig_score_distribution(eval_dir: Path):
     """正常区 vs 异常区的分数分布——越分离越好"""
     raw  = np.load(eval_dir / "raw_smoothed.npy").astype(np.float64)
-    y    = np.load(eval_dir / "y_true.npy").astype(np.int32)
+    y    = _load_y_true(eval_dir)
 
     normal  = raw[y == 0]
     anomaly = raw[y == 1]
@@ -125,7 +148,7 @@ def fig_pr_curve(spca_eval: Path, pstg_eval: Path = None):
     sys.path.insert(0, ".")
 
     raw_s = np.load(spca_eval / "raw_smoothed.npy").astype(np.float32)
-    y_s   = np.load(spca_eval / "y_true.npy").astype(np.int32)
+    y_s   = _load_y_true(spca_eval)
 
     alphas = np.logspace(-4, -0.5, 50)
 
@@ -143,8 +166,8 @@ def fig_pr_curve(spca_eval: Path, pstg_eval: Path = None):
     # PSTG（如果有）
     if pstg_eval and (pstg_eval / "raw_smoothed.npy").exists():
         raw_p = np.load(pstg_eval / "raw_smoothed.npy").astype(np.float32)
-        y_p   = np.load(pstg_eval / "y_true.npy").astype(np.int32) \
-                if (pstg_eval / "y_true.npy").exists() else y_s
+        try: y_p = _load_y_true(pstg_eval)
+        except Exception: y_p = y_s
         rp, pp = compute_pr(raw_p, y_p, alphas)
         ax.plot(rp, pp, "s--", color="#2980b9", ms=3, lw=1.5, label="PSTG")
         ax.scatter([0.862], [0.932], s=70, color="#2980b9", zorder=5, edgecolors="white", lw=1.2)

@@ -385,6 +385,7 @@ def main():
     score_path  = eval_mgr.save_scores(anomaly_scores)
     # raw_smoothed 也保存，方便后续诊断和阈值调试
     np.save(eval_mgr.eval_dir / "raw_smoothed.npy", raw_smoothed)
+    np.save(eval_mgr.eval_dir / "y_true.npy",       y_true)
     print(f"\n  → 指标：{result_path}")
     print(f"  → 分数：{score_path}")
     print(f"  → 原始残差：{eval_mgr.eval_dir}/raw_smoothed.npy")
