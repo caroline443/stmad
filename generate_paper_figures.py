@@ -3,17 +3,28 @@ SpCA 论文配图生成脚本
 ====================
 生成两张论文配图：
 
-  fig_mshtrans.pdf  — 缩放窗口：每通道原始信号+重建+分数（仿 MSHTrans Fig.3）
-  fig_timeline.pdf  — 全时序：聚合分数 + 通道热图
+  fig_detection.pdf — 局部多事件检测图（仿 MTGFlow Fig.13 风格）
+                      自动找事件最密集的 N 步窗口，6 通道叠放，
+                      每通道：分数折线 + 阈值线 + 真实异常着色
+
+  fig_casestudy.pdf — 单事件缩放图（仿 MSHTrans Fig.3 风格）
+                      自动选最短且检测效果最好的事件，
+                      每通道：原始信号+重建 / 逐通道分数+阈值
+
+依赖文件（evaluate_spca.py 生成）：
+  eval_dir/raw_smoothed.npy
+  eval_dir/y_true.npy
+  eval_dir/x_true.npy              ← 新版 evaluate_spca.py
+  eval_dir/x_pred.npy
+  eval_dir/per_channel_residuals.npy
 
 用法：
   python generate_paper_figures.py --spca_eval outputs_spca/latest
-  python generate_paper_figures.py --spca_eval outputs_spca/latest --zoom_event 5 --context 3000
+  python generate_paper_figures.py --spca_eval outputs_spca/latest \\
+      --window 400000 --zoom_event 5 --context 2000 --channels 0 2 4
 """
 
-import argparse
-import json
-import sys
+import argparse, json, sys
 from pathlib import Path
 
 import numpy as np
@@ -21,14 +32,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import matplotlib.ticker
+import matplotlib.ticker as mticker
 
 plt.rcParams.update({
     "font.family":       "serif",
     "font.serif":        ["Times New Roman", "DejaVu Serif"],
     "font.size":         9,
     "axes.labelsize":    9,
-    "axes.titlesize":    9,
     "xtick.labelsize":   7.5,
     "ytick.labelsize":   7.5,
     "legend.fontsize":   7.5,
@@ -42,28 +52,22 @@ plt.rcParams.update({
 OUT_DIR = Path("paper_figures")
 OUT_DIR.mkdir(exist_ok=True)
 
-
-# ─────────────────────────────────────────────────────────────────
-#  辅助
-# ─────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
+#  工具函数
+# ──────────────────────────────────────────────────────────────────
 
 def _extract_events(y):
-    events, in_e = [], False
+    evs, in_e = [], False
     for i, v in enumerate(y):
-        if v and not in_e:
-            s = i; in_e = True
-        elif not v and in_e:
-            events.append((s, i - 1)); in_e = False
-    if in_e:
-        events.append((s, len(y) - 1))
-    return events
-
+        if v and not in_e:  s = i; in_e = True
+        elif not v and in_e: evs.append((s, i-1)); in_e = False
+    if in_e: evs.append((s, len(y)-1))
+    return evs
 
 def _shade(ax, t, mask, color, alpha, label=None):
     in_r = False; first = True
     for i, v in enumerate(mask):
-        if v and not in_r:
-            s0 = t[i]; in_r = True
+        if v and not in_r:  s0 = t[i]; in_r = True
         elif not v and in_r:
             ax.axvspan(s0, t[i], color=color, alpha=alpha, lw=0, zorder=2,
                        label=label if first else None)
@@ -72,125 +76,243 @@ def _shade(ax, t, mask, color, alpha, label=None):
         ax.axvspan(s0, t[-1], color=color, alpha=alpha, lw=0, zorder=2,
                    label=label if first else None)
 
-
-def _load_threshold(eval_dir, raw_smooth, y_true):
+def _load_threshold(eval_dir, raw, y):
     try:
-        res = json.loads((eval_dir / "evaluation_results.json").read_text())
-        v = res.get("threshold")
-        if v:
-            return float(v)
-    except Exception:
-        pass
-    return float(np.percentile(raw_smooth[y_true == 0], 99.5))
+        v = json.loads((eval_dir/"evaluation_results.json").read_text()).get("threshold")
+        if v: return float(v)
+    except: pass
+    return float(np.percentile(raw[y == 0], 99.5))
 
+def _smooth(x, w=15):
+    k = np.ones(w)/w
+    if x.ndim == 1: return np.convolve(x, k, mode="same")
+    return np.stack([np.convolve(x[:,c], k, mode="same") for c in range(x.shape[1])], 1)
 
 def _maxpool(arr, factor):
-    T = (len(arr) // factor) * factor
-    if arr.ndim == 1:
-        return arr[:T].reshape(-1, factor).max(axis=1)
-    return arr[:T].reshape(-1, factor, arr.shape[1]).max(axis=1)
-
-
-def _smooth(x, w=10):
-    k = np.ones(w) / w
-    if x.ndim == 1:
-        return np.convolve(x, k, mode="same")
-    return np.stack([np.convolve(x[:, c], k, mode="same")
-                     for c in range(x.shape[1])], axis=1)
-
+    T = (len(arr)//factor)*factor
+    if arr.ndim == 1: return arr[:T].reshape(-1, factor).max(1)
+    return arr[:T].reshape(-1, factor, arr.shape[1]).max(1)
 
 def _save(fig, path):
     path = Path(path)
-    fig.tight_layout()
     fig.savefig(path, bbox_inches="tight")
-    fig.savefig(str(path).replace(".pdf", ".png"), dpi=200, bbox_inches="tight")
+    fig.savefig(str(path).replace(".pdf",".png"), dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"  → {path}")
 
 
-# ─────────────────────────────────────────────────────────────────
-#  图 1：缩放窗口（仿 MSHTrans Fig.3，去掉 All-dims 废行）
-# ─────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
+#  图 1：局部多事件检测图（仿 MTGFlow Fig.13）
+# ──────────────────────────────────────────────────────────────────
 
-def _best_event(events, raw_smooth, y_true, threshold):
+def _densest_window(events, T, win_size):
+    """找包含最多完整异常事件的 win_size 步窗口，返回 (start, end)"""
+    if not events: return 0, min(win_size, T)
+    best_start, best_count = 0, 0
+    # 滑动窗口：以每个事件起点为候选窗口起点
+    candidates = sorted(set(
+        [max(0, s - win_size//4) for s, e in events] +
+        [max(0, T - win_size)]
+    ))
+    for cs in candidates:
+        ce = min(cs + win_size, T)
+        count = sum(1 for s, e in events if cs <= s and e <= ce)
+        if count > best_count:
+            best_count, best_start = count, cs
+    return best_start, best_start + win_size
+
+
+def fig_detection(eval_dir: Path, out_dir: Path = OUT_DIR,
+                  win_size: int = 500_000, ds_pts: int = 3000):
     """
-    自动选最适合展示的异常事件：
-    - 分数峰值超过阈值（检测到了）
-    - 持续时间不太长（< 5000 步，否则整个图都是绿色背景）
-    - IoU(detected, ground_truth) 最高
-    返回 0-indexed 事件编号。
+    MTGFlow Fig.13 风格：截取事件最密集的 win_size 步，
+    6 通道叠放，每通道 = 逐通道平滑残差 + 阈值线 + 真实异常着色。
     """
-    best_idx, best_score = 0, -1.0
+    y_true     = np.load(eval_dir/"y_true.npy").astype(np.int32)
+    raw_smooth = np.load(eval_dir/"raw_smoothed.npy").astype(np.float64)
+    threshold  = _load_threshold(eval_dir, raw_smooth, y_true)
+    T          = len(y_true)
+    events     = _extract_events(y_true)
+
+    # 加载逐通道数据
+    per_ch_path = eval_dir/"per_channel_residuals.npy"
+    if per_ch_path.exists():
+        per_ch = _smooth(np.load(per_ch_path).astype(np.float64), w=20)
+        C = per_ch.shape[1]
+    else:
+        print("  ⚠ 无 per_channel_residuals.npy，用 aggregate score 代替所有通道")
+        C = 6
+        per_ch = np.tile(raw_smooth[:,None], (1, C))
+
+    # 找最密集窗口
+    win_start, win_end = _densest_window(events, T, win_size)
+    win_events = [(s, e) for s, e in events if win_start <= s and e <= win_end]
+    print(f"  窗口 [{win_start:,}–{win_end:,}]，含 {len(win_events)}/{len(events)} 个事件")
+
+    # 切片
+    sl        = slice(win_start, win_end)
+    per_sl    = per_ch[sl]      # [W, C]
+    y_sl      = y_true[sl]
+
+    # 下采样（max-pooling 保留 spike）
+    factor = max(1, (win_end - win_start) // ds_pts)
+    per_ds = _maxpool(per_sl, factor)
+    y_ds   = _maxpool(y_sl.astype(float), factor)
+    t_ds   = np.arange(len(per_ds)) * factor + win_start
+
+    # 每通道独立阈值（正常段 99.5 分位）
+    ch_thr = []
+    for c in range(C):
+        nm = per_ch[:, c][y_true == 0]
+        ch_thr.append(float(np.percentile(nm, 99.5)) if len(nm) else threshold)
+
+    # ── 绘图：6 行叠放 ────────────────────────────────────────────
+    fig, axes = plt.subplots(C, 1, figsize=(7.5, C * 1.15),
+                              sharex=True,
+                              gridspec_kw={"hspace": 0.06})
+    CH_COLORS = ["#1b7837","#762a83","#e08214","#2166ac","#d6604d","#4d9221"]
+
+    for c, ax in enumerate(axes):
+        score = per_ds[:, c]
+        thr_c = ch_thr[c]
+        col   = CH_COLORS[c % len(CH_COLORS)]
+
+        # 背景填充
+        ax.fill_between(t_ds, score, 0, color="#deebf7", alpha=0.7, lw=0)
+        # 超阈区填充（深色）
+        ax.fill_between(t_ds, score, thr_c,
+                        where=score >= thr_c,
+                        color=col, alpha=0.55, lw=0, zorder=3)
+        # 分数折线
+        ax.plot(t_ds, score, color=col, lw=0.75, zorder=4)
+        # 阈值线（蓝色实线，仿 MTGFlow）
+        ax.axhline(thr_c, color="#2166ac", lw=1.2, ls="-", zorder=5)
+        # 真实异常（粉色半透明）
+        _shade(ax, t_ds, y_ds, "#f4a582", 0.45,
+               label="Ground truth" if c == 0 else None)
+
+        # 事件编号标注（只标在窗口内的）
+        for ei, (es, ee) in enumerate(events):
+            if win_start <= (es+ee)//2 <= win_end:
+                mid = (es + ee) / 2
+                ymax = max(score.max(), thr_c) * 1.15
+                ax.text(mid, ymax, f"A{ei+1}",
+                        ha="center", va="bottom", fontsize=6.5,
+                        color="#c0392b", fontweight="bold")
+
+        ax.set_ylabel(f"Ch {41+c}", fontsize=8.5, rotation=0,
+                      labelpad=36, va="center")
+        ax.set_yticks([])
+        ax.spines["left"].set_visible(False)
+        # 右侧阈值标注
+        ax.text(t_ds[-1]*1.001, thr_c, f" {thr_c:.3f}",
+                va="center", fontsize=6, color="#2166ac",
+                clip_on=False)
+
+    axes[-1].set_xlabel("Time Step")
+    axes[-1].xaxis.set_major_formatter(
+        mticker.FuncFormatter(lambda x, _: f"{x/1e6:.2f}M" if x >= 1e6 else f"{int(x):,}"))
+
+    # 图例
+    legend_elems = [
+        mpatches.Patch(color="#2166ac", label="Threshold"),
+        mpatches.Patch(color="#f4a582", alpha=0.6, label="Ground truth anomaly"),
+        mpatches.Patch(color="gray",    alpha=0.55, label="Score > threshold"),
+    ]
+    axes[0].legend(handles=legend_elems, loc="upper right",
+                   fontsize=7, ncol=3, framealpha=0.9, edgecolor="none")
+
+    fig.suptitle(
+        f"SpCA Per-Channel Anomaly Scores — ESA-AD Mission 1  "
+        f"({win_start:,}–{win_end:,}, {len(win_events)} events shown)",
+        fontsize=9, y=1.01
+    )
+    _save(fig, out_dir/"fig_detection.pdf")
+
+
+# ──────────────────────────────────────────────────────────────────
+#  图 2：单事件缩放图（仿 MSHTrans Fig.3）
+# ──────────────────────────────────────────────────────────────────
+
+def _pick_best_event(events, raw_smooth, y_true, threshold):
+    """
+    选最适合展示的事件：
+    1. 检测到了（peak > threshold）
+    2. 持续时间短（优先 < 3000 步，实在没有则放宽）
+    3. IoU(detection, ground_truth) 最高
+    """
     y_pred = (raw_smooth >= threshold).astype(np.int32)
-    for i, (s, e) in enumerate(events):
-        duration = e - s + 1
-        if duration > 5000:
-            continue          # 太长的事件跳过
+
+    def score_event(idx, max_dur):
+        s, e = events[idx]
+        if e - s + 1 > max_dur: return -1
         peak = raw_smooth[s:e+1].max()
-        if peak < threshold:
-            continue          # 根本没检测到
-        # IoU
-        gt_seg   = y_true[s:e+1]
-        pred_seg = y_pred[s:e+1]
-        inter = (gt_seg & pred_seg).sum()
-        union = (gt_seg | pred_seg).sum()
+        if peak < threshold: return -1
+        inter = (y_true[s:e+1] & y_pred[s:e+1]).sum()
+        union = (y_true[s:e+1] | y_pred[s:e+1]).sum()
         iou   = inter / (union + 1e-8)
-        score = iou * (peak / threshold)   # 同时奖励 IoU 和峰值
-        if score > best_score:
-            best_score, best_idx = score, i
-    return best_idx
+        return iou * (peak / threshold)
+
+    # 逐步放宽持续时间限制
+    for max_dur in [2000, 5000, 15000, 10**9]:
+        scores = [(score_event(i, max_dur), i) for i in range(len(events))]
+        valid  = [(sc, i) for sc, i in scores if sc > 0]
+        if valid:
+            best_i = max(valid)[1]
+            print(f"  自动选择 Event {best_i+1}/{len(events)}"
+                  f"  duration={events[best_i][1]-events[best_i][0]+1}"
+                  f"  peak={raw_smooth[events[best_i][0]:events[best_i][1]+1].max():.4f}"
+                  f"  (max_dur={max_dur})")
+            return best_i
+
+    print("  ⚠ 没有任何事件被检测到，使用 Event 0")
+    return 0
 
 
-def fig_mshtrans(eval_dir: Path, out_dir: Path = OUT_DIR,
-                 zoom_event: int = -1, context: int = 1500,
-                 show_channels: list = None):
+def fig_casestudy(eval_dir: Path, out_dir: Path = OUT_DIR,
+                  zoom_event: int = -1, context: int = -1,
+                  show_channels: list = None):
     """
-    布局（每行对应一对面板）：
-      Row 0   : 聚合分数 + 阈值（整体检测效果）
-      Row 1,3,5: Ch X 原始信号（深蓝）+ 预测重建（橙）
-      Row 2,4,6: Ch X 逐通道分数 + 阈值
+    MSHTrans Fig.3 风格：
+      Row 0      : 聚合分数 + 阈值（整体检测视图）
+      Row 1,3,5  : Ch X  原始信号(深蓝) + 预测重建(橙)
+      Row 2,4,6  : Ch X  逐通道分数 + 阈值
     """
     sys.path.insert(0, ".")
-
-    y_true     = np.load(eval_dir / "y_true.npy").astype(np.int32)
-    raw_smooth = np.load(eval_dir / "raw_smoothed.npy").astype(np.float64)
+    y_true     = np.load(eval_dir/"y_true.npy").astype(np.int32)
+    raw_smooth = np.load(eval_dir/"raw_smoothed.npy").astype(np.float64)
     threshold  = _load_threshold(eval_dir, raw_smooth, y_true)
-    T = len(y_true)
+    T          = len(y_true)
 
-    has_pred = (eval_dir / "x_true.npy").exists()
-    has_per  = (eval_dir / "per_channel_residuals.npy").exists()
-
-    if has_pred:
-        x_true_all = np.load(eval_dir / "x_true.npy").astype(np.float64)
-        x_pred_all = np.load(eval_dir / "x_pred.npy").astype(np.float64)
-        C = x_true_all.shape[1]
-    else:
-        C = 6; x_true_all = x_pred_all = None
-        print("  ⚠ 未找到 x_true.npy，信号行将留空。重新运行 evaluate_spca.py 可修复。")
-
-    if has_per:
-        per_ch_all = _smooth(
-            np.load(eval_dir / "per_channel_residuals.npy").astype(np.float64), w=10)
-    else:
-        per_ch_all = None
+    has_pred = (eval_dir/"x_true.npy").exists()
+    has_per  = (eval_dir/"per_channel_residuals.npy").exists()
+    x_true_all = np.load(eval_dir/"x_true.npy").astype(np.float64) if has_pred else None
+    x_pred_all = np.load(eval_dir/"x_pred.npy").astype(np.float64) if has_pred else None
+    per_ch_all = _smooth(np.load(eval_dir/"per_channel_residuals.npy").astype(np.float64), w=10) \
+                 if has_per else None
+    C = x_true_all.shape[1] if has_pred else 6
 
     if show_channels is None:
         show_channels = list(range(min(3, C)))
 
-    # 时间窗口
     events = _extract_events(y_true)
     if not events:
         print("  ⚠ 无异常事件，跳过"); return
 
+    # 自动或手动选事件
     if zoom_event < 0:
-        zoom_event = _best_event(events, raw_smooth, y_true, threshold)
-        ev_s, ev_e = events[zoom_event]
-        dur = ev_e - ev_s + 1
-        print(f"  自动选择 Event {zoom_event+1}/{len(events)}"
-              f"  (duration={dur}, peak={raw_smooth[ev_s:ev_e+1].max():.4f})")
+        zoom_event = _pick_best_event(events, raw_smooth, y_true, threshold)
     else:
-        zoom_event = min(zoom_event, len(events) - 1)
+        zoom_event = min(zoom_event, len(events)-1)
+
     ev_s, ev_e = events[zoom_event]
+    ev_dur = ev_e - ev_s + 1
+
+    # context：自动设为事件长度的 1.5 倍（至少 500 步）
+    if context < 0:
+        context = max(500, ev_dur * 3 // 2)
+        print(f"  自动 context={context} 步（事件长度={ev_dur}）")
+
     win_s = max(0, ev_s - context)
     win_e = min(T, ev_e + context)
     t      = np.arange(win_s, win_e)
@@ -198,97 +320,80 @@ def fig_mshtrans(eval_dir: Path, out_dir: Path = OUT_DIR,
     agg_sc = raw_smooth[win_s:win_e]
     y_pred = (agg_sc >= threshold).astype(np.int32)
 
-    N_ch   = len(show_channels)
-    # 行高：[聚合分数] + [信号, 分数] × N_ch
-    row_h  = [1.0] + [1.2, 0.75] * N_ch
+    # ── 布局 ──────────────────────────────────────────────────────
+    N_ch  = len(show_channels)
+    row_h = [0.9] + [1.2, 0.7] * N_ch
     fig, axes = plt.subplots(len(row_h), 1,
-                              figsize=(7.0, sum(row_h) * 0.9),
+                              figsize=(7.0, sum(row_h) * 0.92),
                               sharex=True,
                               gridspec_kw={"height_ratios": row_h, "hspace": 0.04})
 
-    # ── 聚合分数行 ───────────────────────────────────────────────
+    # ── Row 0：聚合分数 ────────────────────────────────────────────
     ax = axes[0]
-    ax.fill_between(t, agg_sc, 0, where=agg_sc >= 0,
-                    color="#fcc5c0", alpha=0.7, lw=0)
-    ax.plot(t, agg_sc, color="#d6604d", lw=0.8, label="Anomaly score")
-    ax.axhline(threshold, color="#67001f", ls="--", lw=1.3,
-               label=f"Threshold  ε*={threshold:.3f}")
-    # 检测到的区域（深红填充）
+    ax.fill_between(t, agg_sc, 0, color="#fdd0cb", alpha=0.6, lw=0)
     ax.fill_between(t, agg_sc, threshold,
                     where=agg_sc >= threshold,
-                    color="#d6604d", alpha=0.55, lw=0, zorder=3,
-                    label="Detected")
-    # 真实异常（绿色半透明）
-    _shade(ax, t, gt, "#27ae60", 0.22, "Ground truth")
+                    color="#d6604d", alpha=0.65, lw=0, zorder=3, label="Detected")
+    ax.plot(t, agg_sc, color="#d6604d", lw=0.85, label="Anomaly score")
+    ax.axhline(threshold, color="#67001f", ls="--", lw=1.3,
+               label=f"Threshold ε*={threshold:.3f}")
+    _shade(ax, t, gt, "#41ab5d", 0.25, "Ground truth")
     ax.set_yticks([])
     ax.spines["left"].set_visible(False)
-    ax.set_ylabel("Score\n(all ch.)", fontsize=8, rotation=0,
-                  labelpad=50, va="center")
-    ax.legend(loc="upper left" if t[0] > 0 else "upper right",
-              fontsize=7, ncol=4, framealpha=0.85, edgecolor="none",
-              columnspacing=0.8)
+    ax.set_ylabel("Score\n(all ch.)", fontsize=7.5, rotation=0, labelpad=52, va="center")
+    ax.legend(loc="upper right", fontsize=7, ncol=4,
+              framealpha=0.9, edgecolor="none", columnspacing=0.7)
 
-    # ── 各通道：信号行 + 分数行 ─────────────────────────────────
+    # ── 各通道：信号行 + 分数行 ────────────────────────────────────
     CH_COLORS = plt.cm.tab10.colors
     for k, c in enumerate(show_channels):
-        ax_sig   = axes[1 + k * 2]
-        ax_score = axes[2 + k * 2]
-        col = CH_COLORS[c % 10]
-        ch_name = f"Ch {41 + c}"
+        ax_s = axes[1 + k*2]
+        ax_r = axes[2 + k*2]
+        ch   = f"Ch {41+c}"
 
         # 信号行
-        ax_sig.set_ylabel(ch_name, fontsize=8.5, rotation=0,
-                          labelpad=50, va="center")
+        ax_s.set_ylabel(ch, fontsize=8.5, rotation=0, labelpad=52, va="center")
         if x_true_all is not None:
             sig  = x_true_all[win_s:win_e, c]
             pred = x_pred_all[win_s:win_e, c]
-            # 自动 y 范围：clip 到 99.5 分位以避免单点尖峰撑爆轴
-            ylo = np.percentile(sig, 0.5); yhi = np.percentile(sig, 99.5)
-            pad = (yhi - ylo) * 0.15
-            ax_sig.set_ylim(ylo - pad, yhi + pad * 2)
-            ax_sig.plot(t, sig,  color="#2c3e50", lw=0.6, label="Original",      zorder=3)
-            ax_sig.plot(t, pred, color="#e67e22", lw=0.6, label="Reconstruction", zorder=4,
-                        alpha=0.85)
+            lo, hi = np.percentile(sig, 0.5), np.percentile(sig, 99.5)
+            pad = (hi - lo) * 0.2
+            ax_s.set_ylim(lo - pad, hi + pad * 2.5)
+            ax_s.plot(t, sig,  color="#2c3e50", lw=0.6, label="Original", zorder=3)
+            ax_s.plot(t, pred, color="#e67e22", lw=0.6, label="Reconstruction",
+                      alpha=0.9, zorder=4)
             if k == 0:
-                ax_sig.legend(loc="upper right", fontsize=7,
-                              framealpha=0.85, edgecolor="none")
-        _shade(ax_sig, t, gt, "#27ae60", 0.22)
-        ax_sig.set_yticks([])
-        ax_sig.spines["left"].set_visible(False)
+                ax_s.legend(loc="upper right", fontsize=7,
+                             framealpha=0.9, edgecolor="none")
+        _shade(ax_s, t, gt, "#41ab5d", 0.22)
+        ax_s.set_yticks([]); ax_s.spines["left"].set_visible(False)
 
         # 分数行
-        ax_score.set_ylabel(ch_name, fontsize=8.5, rotation=0,
-                            labelpad=50, va="center")
+        ax_r.set_ylabel(ch, fontsize=8.5, rotation=0, labelpad=52, va="center")
         if per_ch_all is not None:
-            ch_sc = per_ch_all[win_s:win_e, c]
-            # 每通道阈值：训练集正常样本的 99.8 分位
+            ch_sc  = per_ch_all[win_s:win_e, c]
             ch_thr = float(np.percentile(per_ch_all[:, c][y_true == 0], 99.5))
         else:
-            ch_sc  = agg_sc
-            ch_thr = threshold
-        ax_score.fill_between(t, ch_sc, 0,
-                              where=ch_sc >= 0, color="#fcc5c0", alpha=0.65, lw=0)
-        ax_score.plot(t, ch_sc, color="#d6604d", lw=0.65)
-        ax_score.axhline(ch_thr, color="#67001f", ls="--", lw=1.0)
-        ax_score.fill_between(t, ch_sc, ch_thr,
-                              where=ch_sc >= ch_thr,
-                              color="#d6604d", alpha=0.55, lw=0, zorder=3)
-        _shade(ax_score, t, gt, "#27ae60", 0.20)
-        ax_score.set_yticks([])
-        ax_score.spines["left"].set_visible(False)
+            ch_sc = agg_sc; ch_thr = threshold
+        ax_r.fill_between(t, ch_sc, 0, color="#fdd0cb", alpha=0.6, lw=0)
+        ax_r.fill_between(t, ch_sc, ch_thr,
+                          where=ch_sc >= ch_thr,
+                          color="#d6604d", alpha=0.6, lw=0, zorder=3)
+        ax_r.plot(t, ch_sc, color="#d6604d", lw=0.65)
+        ax_r.axhline(ch_thr, color="#67001f", ls="--", lw=1.0)
+        _shade(ax_r, t, gt, "#41ab5d", 0.20)
+        ax_r.set_yticks([]); ax_r.spines["left"].set_visible(False)
 
     axes[-1].set_xlabel("Time Step")
 
-    # 只在顶部标一次事件名
-    ev_mid = (ev_s + ev_e) / 2
-    axes[0].annotate(
-        f"Event {zoom_event + 1}",
-        xy=(ev_mid, axes[0].get_ylim()[1]),
-        xytext=(ev_mid, axes[0].get_ylim()[1] * 1.02),
-        fontsize=8, color="#c0392b", fontweight="bold",
-        ha="center", va="bottom",
-        annotation_clip=False,
-    )
+    # 事件标注（只在顶部标一次）
+    ev_mid  = (ev_s + ev_e) / 2
+    y0_top  = axes[0].get_ylim()[1]
+    axes[0].annotate(f"Event {zoom_event+1}",
+                     xy=(ev_mid, y0_top), xytext=(ev_mid, y0_top * 1.08),
+                     fontsize=8.5, color="#c0392b", fontweight="bold",
+                     ha="center", va="bottom", annotation_clip=False,
+                     arrowprops=dict(arrowstyle="-", color="#c0392b", lw=0.8))
 
     ch_str = "+".join([f"Ch{41+c}" for c in show_channels])
     fig.suptitle(
@@ -296,195 +401,24 @@ def fig_mshtrans(eval_dir: Path, out_dir: Path = OUT_DIR,
         f"(Event {zoom_event+1}/{len(events)},  ±{context} steps,  {ch_str})",
         fontsize=8.5, y=1.03
     )
-
-    _save(fig, out_dir / "fig_mshtrans.pdf")
-
-
-# ─────────────────────────────────────────────────────────────────
-#  图 2：全时序（聚合分数 + 通道热图）
-# ─────────────────────────────────────────────────────────────────
-
-def fig_timeline(eval_dir: Path, out_dir: Path = OUT_DIR,
-                 ds_target: int = 6000):
-    """
-    全时序聚合异常分数 — 单面板清晰折线图。
-    X轴：时间步；Y轴：平滑残差；虚线：阈值；
-    绿色区域：真实异常；红色填充：检测到的区域；
-    事件标注：A1, A2-3, A4... （相邻太近的自动合并）
-    """
-    y_true     = np.load(eval_dir / "y_true.npy").astype(np.int32)
-    raw_smooth = np.load(eval_dir / "raw_smoothed.npy").astype(np.float64)
-    threshold  = _load_threshold(eval_dir, raw_smooth, y_true)
-    T          = len(y_true)
-    events     = _extract_events(y_true)
-
-    # 下采样（max-pooling 保留尖峰）
-    factor = max(1, T // ds_target)
-    agg_ds = _maxpool(raw_smooth, factor)
-    y_ds   = _maxpool(y_true.astype(np.float64), factor)
-    t_ds   = np.arange(len(agg_ds)) * factor
-
-    fig, ax = plt.subplots(figsize=(8.0, 2.8))
-
-    # 曲线背景填充
-    ax.fill_between(t_ds, agg_ds, 0,
-                    where=agg_ds >= 0, color="#c6dbef", alpha=0.6, lw=0)
-    # 检测到的区域（分数超阈值）
-    ax.fill_between(t_ds, agg_ds, threshold,
-                    where=agg_ds >= threshold,
-                    color="#d6604d", alpha=0.7, lw=0, zorder=3,
-                    label="Detected (score > threshold)")
-    # 真实异常区（绿色半透明）
-    _shade(ax, t_ds, y_ds, "#41ab5d", 0.30, "Ground truth anomaly")
-    # 分数曲线
-    ax.plot(t_ds, agg_ds, color="#2166ac", lw=0.7, zorder=4, label="Anomaly score")
-    # 阈值线
-    ax.axhline(threshold, color="#d6604d", ls="--", lw=1.4, zorder=5,
-               label=f"Threshold ε*={threshold:.3f}")
-
-    # 事件标注（竖虚线 + 标签，自动合并过近的）
-    ymax_data = max(agg_ds.max(), threshold) * 1.05
-    ax.set_ylim(0, ymax_data * 1.22)
-    ev_positions = [(s + e) / 2 for s, e in events]
-    _place_event_labels(ax, ev_positions, t_ds, ax.get_ylim()[1], factor)
-
-    ax.set_xlabel("Time Step", fontsize=9)
-    ax.set_ylabel("Anomaly Score", fontsize=9)
-    ax.legend(loc="upper right", fontsize=8, ncol=4,
-              framealpha=0.9, edgecolor="none", columnspacing=0.7)
-    ax.set_xlim(t_ds[0], t_ds[-1])
-
-    # 格式化 x 轴为 ×10⁶
-    ax.xaxis.set_major_formatter(
-        matplotlib.ticker.FuncFormatter(lambda x, _: f"{x/1e6:.1f}"))
-    ax.set_xlabel("Time Step (×10⁶)", fontsize=9)
-
-    fig.suptitle(
-        f"SpCA Anomaly Score — ESA-AD Mission 1  "
-        f"(T={T:,}, {len(events)} events, threshold={threshold:.3f})",
-        fontsize=9, y=1.02
-    )
-    _save(fig, out_dir / "fig_timeline.pdf")
+    _save(fig, out_dir/"fig_casestudy.pdf")
 
 
-def _place_event_labels(ax, positions, t_ds, ymax, factor):
-    """
-    在 ax 上标注事件：竖虚线 + 文字。
-    相邻距离 < min_gap（像素对应的数据单位）的合并为一个 tick，不打文字。
-    """
-    if not positions:
-        return
-    T_range = t_ds[-1] - t_ds[0]
-    min_gap = T_range * 0.025   # 2.5% 的时间轴宽度
-
-    # 将太近的事件合并
-    groups = []
-    cur_group = [positions[0]]
-    for p in positions[1:]:
-        if p - cur_group[-1] < min_gap:
-            cur_group.append(p)
-        else:
-            groups.append(cur_group)
-            cur_group = [p]
-    groups.append(cur_group)
-
-    for gi, grp in enumerate(groups):
-        mid = np.mean(grp)
-        # 只标所有事件中第一个事件的序号
-        first_idx = positions.index(grp[0]) + 1
-        if len(grp) == 1:
-            label = f"A{first_idx}"
-        else:
-            last_idx = positions.index(grp[-1]) + 1
-            label = f"A{first_idx}–{last_idx}"
-
-        ax.axvline(mid, color="#d6604d", lw=0.7, ls=":", alpha=0.7, zorder=2)
-        ax.text(mid, ymax * 0.98, label,
-                ha="center", va="top", fontsize=6, color="#c0392b",
-                fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none", alpha=0.7))
-
-
-# ─────────────────────────────────────────────────────────────────
-#  图 3：分数分布直方图（仿 MTGFlow Fig.5/7）
-# ─────────────────────────────────────────────────────────────────
-
-def fig_score_dist(eval_dirs: dict, out_dir: Path = OUT_DIR):
-    """
-    正常段 vs 异常段的分数分布对比直方图（仿 MTGFlow Fig.5/7）。
-
-    eval_dirs: {"SpCA": Path(...), "PSTG": Path(...)}  —— 只传一个也可以
-    布局：每个方法一列，列数 = len(eval_dirs)
-
-    好的检测器：两个分布分离明显（正常低分、异常高分）。
-    """
-    from scipy.stats import gaussian_kde
-
-    n_methods = len(eval_dirs)
-    fig, axes = plt.subplots(1, n_methods,
-                              figsize=(2.8 * n_methods, 2.8),
-                              sharey=False,
-                              gridspec_kw={"wspace": 0.35})
-    if n_methods == 1:
-        axes = [axes]
-
-    for ax, (method_name, eval_dir) in zip(axes, eval_dirs.items()):
-        eval_dir = Path(eval_dir)
-        raw   = np.load(eval_dir / "raw_smoothed.npy").astype(np.float64)
-        y     = np.load(eval_dir / "y_true.npy").astype(np.int32)
-        thr   = _load_threshold(eval_dir, raw, y)
-
-        normal  = raw[y == 0]
-        anomaly = raw[y == 1]
-
-        # 裁剪右侧长尾（0.1% 之后不影响主体可视）
-        x_max = min(np.percentile(raw, 99.9), thr * 4)
-        bins  = np.linspace(0, x_max, 60)
-
-        ax.hist(normal,  bins=bins, density=True, alpha=0.55,
-                color="#4393c3", label="Normal", zorder=2)
-        ax.hist(anomaly, bins=bins, density=True, alpha=0.70,
-                color="#d6604d", label="Anomaly", zorder=3)
-
-        # KDE 曲线
-        xs = np.linspace(0, x_max, 400)
-        for vals, col, lw in [(normal, "#2166ac", 1.5), (anomaly, "#b2182b", 1.5)]:
-            clipped = np.clip(vals, 0, x_max)
-            if len(clipped) > 50:
-                try:
-                    kde = gaussian_kde(clipped, bw_method=0.12)
-                    ax.plot(xs, kde(xs), color=col, lw=lw, zorder=4)
-                except Exception:
-                    pass
-
-        # 阈值线
-        ax.axvline(thr, color="#1a1a2e", ls="--", lw=1.3, zorder=5,
-                   label=f"Threshold={thr:.3f}")
-
-        ax.set_xlabel("Anomaly Score", fontsize=8.5)
-        ax.set_ylabel("Density", fontsize=8.5)
-        ax.set_title(method_name, fontsize=9)
-        ax.set_xlim(0, x_max)
-        ax.legend(fontsize=7.5, framealpha=0.85, edgecolor="none")
-
-    fig.suptitle("Normal vs. Anomaly Score Distribution — ESA-AD Mission 1",
-                 fontsize=9, y=1.03)
-    _save(fig, out_dir / "fig_score_dist.pdf")
-
-
-# ─────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 #  main
-# ─────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--spca_eval",  type=str, default=None)
-    p.add_argument("--pstg_eval",  type=str, default=None,
-                   help="PSTG eval 目录（可选，用于分数分布对比图）")
+    p.add_argument("--window",     type=int, default=500_000,
+                   help="fig_detection 截取的窗口步数（默认 500000）")
     p.add_argument("--zoom_event", type=int, default=-1,
-                   help="聚焦第几个事件（0-indexed）；-1=自动选最佳（默认）")
-    p.add_argument("--context",    type=int, default=1500)
-    p.add_argument("--channels",   type=int, nargs="+", default=None)
+                   help="fig_casestudy 聚焦事件序号（0-indexed，-1=自动）")
+    p.add_argument("--context",    type=int, default=-1,
+                   help="fig_casestudy 事件前后步数（-1=自动=事件长度×1.5）")
+    p.add_argument("--channels",   type=int, nargs="+", default=None,
+                   help="fig_casestudy 显示哪些通道（0-indexed，默认 0 1 2）")
     p.add_argument("--out_dir",    type=str, default="paper_figures")
     return p.parse_args()
 
@@ -496,56 +430,34 @@ def main():
     sys.path.insert(0, ".")
 
     # 找 eval 目录
-    eval_dir = None
-    if args.spca_eval:
-        eval_dir = Path(args.spca_eval)
+    eval_dir = Path(args.spca_eval) if args.spca_eval else None
     if eval_dir is None or not eval_dir.exists():
         for cand in [Path("outputs_spca/latest"),
-                     *sorted(Path("outputs_spca").glob("eval_*/raw_smoothed.npy"),
-                             reverse=True)]:
-            p = cand if cand.name == "latest" else cand.parent
-            if (p / "raw_smoothed.npy").exists():
-                eval_dir = p; break
+                     *[p.parent for p in sorted(
+                         Path("outputs_spca").glob("eval_*/raw_smoothed.npy"),
+                         reverse=True)]]:
+            if (cand/"raw_smoothed.npy").exists():
+                eval_dir = cand; break
 
     if eval_dir is None:
         print("❌ 找不到 eval 目录，请指定 --spca_eval <路径>"); return
 
-    print(f"\n使用 eval 目录：{eval_dir}")
+    print(f"\neval 目录：{eval_dir}")
     print(f"输出目录：{out_dir.absolute()}\n")
 
-    print("▶ MSHTrans 风格缩放图 (fig_mshtrans.pdf) ...")
-    fig_mshtrans(eval_dir, out_dir,
-                 zoom_event=args.zoom_event,
-                 context=args.context,
-                 show_channels=args.channels)
+    print("▶ 局部多事件检测图 (fig_detection.pdf) ...")
+    fig_detection(eval_dir, out_dir, win_size=args.window)
 
-    print("▶ 全时序聚合+热图 (fig_timeline.pdf) ...")
-    fig_timeline(eval_dir, out_dir)
-
-    print("▶ 分数分布直方图 (fig_score_dist.pdf) ...")
-    dist_dirs = {"SpCA": eval_dir}
-    if args.pstg_eval:
-        pstg_path = Path(args.pstg_eval)
-        if (pstg_path / "raw_smoothed.npy").exists() and (pstg_path / "y_true.npy").exists():
-            dist_dirs["PSTG"] = pstg_path
-        else:
-            missing = [f for f in ["raw_smoothed.npy", "y_true.npy"]
-                       if not (pstg_path / f).exists()]
-            print(f"  ⚠ PSTG eval 目录缺少 {missing}，跳过 PSTG 对比列")
-    elif (Path("outputs") / "latest" / "raw_smoothed.npy").exists():
-        pstg_auto = Path("outputs") / "latest"
-        if (pstg_auto / "y_true.npy").exists():
-            dist_dirs["PSTG"] = pstg_auto
-            print("  自动找到 outputs/latest 作为 PSTG eval")
-        else:
-            print("  outputs/latest 缺少 y_true.npy，跳过 PSTG 对比列")
-    fig_score_dist(dist_dirs, out_dir)
+    print("\n▶ 单事件缩放图 (fig_casestudy.pdf) ...")
+    fig_casestudy(eval_dir, out_dir,
+                  zoom_event=args.zoom_event,
+                  context=args.context,
+                  show_channels=args.channels)
 
     print("\n完成。")
     print("─" * 45)
-    print("  fig_mshtrans.pdf  — 信号+重建+分数缩放图")
-    print("  fig_timeline.pdf  — 全时序聚合+通道热图")
-    print("  fig_score_dist.pdf— 正常vs异常分数分布")
+    print("  fig_detection.pdf  — 多事件局部检测（仿 MTGFlow Fig.13）")
+    print("  fig_casestudy.pdf  — 单事件缩放（仿 MSHTrans Fig.3）")
 
 
 if __name__ == "__main__":
