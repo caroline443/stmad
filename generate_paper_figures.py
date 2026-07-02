@@ -412,12 +412,81 @@ def _place_event_labels(ax, positions, t_ds, ymax, factor):
 
 
 # ─────────────────────────────────────────────────────────────────
+#  图 3：分数分布直方图（仿 MTGFlow Fig.5/7）
+# ─────────────────────────────────────────────────────────────────
+
+def fig_score_dist(eval_dirs: dict, out_dir: Path = OUT_DIR):
+    """
+    正常段 vs 异常段的分数分布对比直方图（仿 MTGFlow Fig.5/7）。
+
+    eval_dirs: {"SpCA": Path(...), "PSTG": Path(...)}  —— 只传一个也可以
+    布局：每个方法一列，列数 = len(eval_dirs)
+
+    好的检测器：两个分布分离明显（正常低分、异常高分）。
+    """
+    from scipy.stats import gaussian_kde
+
+    n_methods = len(eval_dirs)
+    fig, axes = plt.subplots(1, n_methods,
+                              figsize=(2.8 * n_methods, 2.8),
+                              sharey=False,
+                              gridspec_kw={"wspace": 0.35})
+    if n_methods == 1:
+        axes = [axes]
+
+    for ax, (method_name, eval_dir) in zip(axes, eval_dirs.items()):
+        eval_dir = Path(eval_dir)
+        raw   = np.load(eval_dir / "raw_smoothed.npy").astype(np.float64)
+        y     = np.load(eval_dir / "y_true.npy").astype(np.int32)
+        thr   = _load_threshold(eval_dir, raw, y)
+
+        normal  = raw[y == 0]
+        anomaly = raw[y == 1]
+
+        # 裁剪右侧长尾（0.1% 之后不影响主体可视）
+        x_max = min(np.percentile(raw, 99.9), thr * 4)
+        bins  = np.linspace(0, x_max, 60)
+
+        ax.hist(normal,  bins=bins, density=True, alpha=0.55,
+                color="#4393c3", label="Normal", zorder=2)
+        ax.hist(anomaly, bins=bins, density=True, alpha=0.70,
+                color="#d6604d", label="Anomaly", zorder=3)
+
+        # KDE 曲线
+        xs = np.linspace(0, x_max, 400)
+        for vals, col, lw in [(normal, "#2166ac", 1.5), (anomaly, "#b2182b", 1.5)]:
+            clipped = np.clip(vals, 0, x_max)
+            if len(clipped) > 50:
+                try:
+                    kde = gaussian_kde(clipped, bw_method=0.12)
+                    ax.plot(xs, kde(xs), color=col, lw=lw, zorder=4)
+                except Exception:
+                    pass
+
+        # 阈值线
+        ax.axvline(thr, color="#1a1a2e", ls="--", lw=1.3, zorder=5,
+                   label=f"Threshold={thr:.3f}")
+
+        ax.set_xlabel("Anomaly Score", fontsize=8.5)
+        ax.set_ylabel("Density", fontsize=8.5)
+        ax.set_title(method_name, fontsize=9)
+        ax.set_xlim(0, x_max)
+        ax.legend(fontsize=7.5, framealpha=0.85, edgecolor="none")
+
+    fig.suptitle("Normal vs. Anomaly Score Distribution — ESA-AD Mission 1",
+                 fontsize=9, y=1.03)
+    _save(fig, out_dir / "fig_score_dist.pdf")
+
+
+# ─────────────────────────────────────────────────────────────────
 #  main
 # ─────────────────────────────────────────────────────────────────
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--spca_eval",  type=str, default=None)
+    p.add_argument("--pstg_eval",  type=str, default=None,
+                   help="PSTG eval 目录（可选，用于分数分布对比图）")
     p.add_argument("--zoom_event", type=int, default=0)
     p.add_argument("--context",    type=int, default=1500)
     p.add_argument("--channels",   type=int, nargs="+", default=None)
@@ -458,7 +527,24 @@ def main():
     print("▶ 全时序聚合+热图 (fig_timeline.pdf) ...")
     fig_timeline(eval_dir, out_dir)
 
+    print("▶ 分数分布直方图 (fig_score_dist.pdf) ...")
+    dist_dirs = {"SpCA": eval_dir}
+    if args.pstg_eval:
+        pstg_path = Path(args.pstg_eval)
+        if (pstg_path / "raw_smoothed.npy").exists():
+            dist_dirs["PSTG"] = pstg_path
+        else:
+            print(f"  ⚠ PSTG eval 目录无效，跳过 PSTG 对比列")
+    elif (Path("outputs") / "latest" / "raw_smoothed.npy").exists():
+        dist_dirs["PSTG"] = Path("outputs") / "latest"
+        print("  自动找到 outputs/latest 作为 PSTG eval")
+    fig_score_dist(dist_dirs, out_dir)
+
     print("\n完成。")
+    print("─" * 45)
+    print("  fig_mshtrans.pdf  — 信号+重建+分数缩放图")
+    print("  fig_timeline.pdf  — 全时序聚合+通道热图")
+    print("  fig_score_dist.pdf— 正常vs异常分数分布")
 
 
 if __name__ == "__main__":
