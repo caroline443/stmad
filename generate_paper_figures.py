@@ -531,13 +531,19 @@ def main():
     dist_dirs = {"SpCA": eval_dir}
     if args.pstg_eval:
         pstg_path = Path(args.pstg_eval)
-        if (pstg_path / "raw_smoothed.npy").exists():
+        if (pstg_path / "raw_smoothed.npy").exists() and (pstg_path / "y_true.npy").exists():
             dist_dirs["PSTG"] = pstg_path
         else:
-            print(f"  ⚠ PSTG eval 目录无效，跳过 PSTG 对比列")
+            missing = [f for f in ["raw_smoothed.npy", "y_true.npy"]
+                       if not (pstg_path / f).exists()]
+            print(f"  ⚠ PSTG eval 目录缺少 {missing}，跳过 PSTG 对比列")
     elif (Path("outputs") / "latest" / "raw_smoothed.npy").exists():
-        dist_dirs["PSTG"] = Path("outputs") / "latest"
-        print("  自动找到 outputs/latest 作为 PSTG eval")
+        pstg_auto = Path("outputs") / "latest"
+        if (pstg_auto / "y_true.npy").exists():
+            dist_dirs["PSTG"] = pstg_auto
+            print("  自动找到 outputs/latest 作为 PSTG eval")
+        else:
+            print("  outputs/latest 缺少 y_true.npy，跳过 PSTG 对比列")
     fig_score_dist(dist_dirs, out_dir)
 
     print("\n完成。")
