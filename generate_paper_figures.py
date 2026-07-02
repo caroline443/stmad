@@ -21,7 +21,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.colors import LinearSegmentedColormap
+import matplotlib.ticker
 
 plt.rcParams.update({
     "font.family":       "serif",
@@ -112,8 +112,37 @@ def _save(fig, path):
 #  图 1：缩放窗口（仿 MSHTrans Fig.3，去掉 All-dims 废行）
 # ─────────────────────────────────────────────────────────────────
 
+def _best_event(events, raw_smooth, y_true, threshold):
+    """
+    自动选最适合展示的异常事件：
+    - 分数峰值超过阈值（检测到了）
+    - 持续时间不太长（< 5000 步，否则整个图都是绿色背景）
+    - IoU(detected, ground_truth) 最高
+    返回 0-indexed 事件编号。
+    """
+    best_idx, best_score = 0, -1.0
+    y_pred = (raw_smooth >= threshold).astype(np.int32)
+    for i, (s, e) in enumerate(events):
+        duration = e - s + 1
+        if duration > 5000:
+            continue          # 太长的事件跳过
+        peak = raw_smooth[s:e+1].max()
+        if peak < threshold:
+            continue          # 根本没检测到
+        # IoU
+        gt_seg   = y_true[s:e+1]
+        pred_seg = y_pred[s:e+1]
+        inter = (gt_seg & pred_seg).sum()
+        union = (gt_seg | pred_seg).sum()
+        iou   = inter / (union + 1e-8)
+        score = iou * (peak / threshold)   # 同时奖励 IoU 和峰值
+        if score > best_score:
+            best_score, best_idx = score, i
+    return best_idx
+
+
 def fig_mshtrans(eval_dir: Path, out_dir: Path = OUT_DIR,
-                 zoom_event: int = 0, context: int = 1500,
+                 zoom_event: int = -1, context: int = 1500,
                  show_channels: list = None):
     """
     布局（每行对应一对面板）：
@@ -152,7 +181,15 @@ def fig_mshtrans(eval_dir: Path, out_dir: Path = OUT_DIR,
     events = _extract_events(y_true)
     if not events:
         print("  ⚠ 无异常事件，跳过"); return
-    zoom_event = min(zoom_event, len(events) - 1)
+
+    if zoom_event < 0:
+        zoom_event = _best_event(events, raw_smooth, y_true, threshold)
+        ev_s, ev_e = events[zoom_event]
+        dur = ev_e - ev_s + 1
+        print(f"  自动选择 Event {zoom_event+1}/{len(events)}"
+              f"  (duration={dur}, peak={raw_smooth[ev_s:ev_e+1].max():.4f})")
+    else:
+        zoom_event = min(zoom_event, len(events) - 1)
     ev_s, ev_e = events[zoom_event]
     win_s = max(0, ev_s - context)
     win_e = min(T, ev_e + context)
@@ -270,106 +307,63 @@ def fig_mshtrans(eval_dir: Path, out_dir: Path = OUT_DIR,
 def fig_timeline(eval_dir: Path, out_dir: Path = OUT_DIR,
                  ds_target: int = 6000):
     """
-    两层布局：
-      上层：聚合分数 + 阈值 + 所有异常事件标注
-      下层：热图（通道 × 时间，颜色 = 每通道标准化残差）
-
-    优点：解决了「33个标签挤在一起」和「6个面板一模一样」两个问题。
+    全时序聚合异常分数 — 单面板清晰折线图。
+    X轴：时间步；Y轴：平滑残差；虚线：阈值；
+    绿色区域：真实异常；红色填充：检测到的区域；
+    事件标注：A1, A2-3, A4... （相邻太近的自动合并）
     """
     y_true     = np.load(eval_dir / "y_true.npy").astype(np.int32)
     raw_smooth = np.load(eval_dir / "raw_smoothed.npy").astype(np.float64)
     threshold  = _load_threshold(eval_dir, raw_smooth, y_true)
-    T = len(y_true)
+    T          = len(y_true)
+    events     = _extract_events(y_true)
 
-    has_per = (eval_dir / "per_channel_residuals.npy").exists()
-    if has_per:
-        per_ch = np.load(eval_dir / "per_channel_residuals.npy").astype(np.float64)
-        per_ch = _smooth(per_ch, w=20)
-        C = per_ch.shape[1]
-    else:
-        C = 6
-        per_ch = None
-        print("  ⚠ 未找到 per_channel_residuals.npy，热图将使用 aggregate score 填充。")
-
-    events = _extract_events(y_true)
-
-    # ── 下采样 ────────────────────────────────────────────────────
+    # 下采样（max-pooling 保留尖峰）
     factor = max(1, T // ds_target)
     agg_ds = _maxpool(raw_smooth, factor)
     y_ds   = _maxpool(y_true.astype(np.float64), factor)
     t_ds   = np.arange(len(agg_ds)) * factor
 
-    if has_per:
-        per_ds = _maxpool(per_ch, factor)   # [T_ds, C]
-        # 每通道归一化到 [0, 1]（相对于该通道正常段的最大值）
-        per_norm = np.zeros_like(per_ds)
-        for c in range(C):
-            normal_max = np.percentile(per_ds[:, c][y_ds == 0], 99.5) + 1e-8
-            per_norm[:, c] = np.clip(per_ds[:, c] / normal_max, 0, 1)
-    else:
-        per_norm = np.tile((agg_ds / (agg_ds.max() + 1e-8))[:, None], (1, C))
+    fig, ax = plt.subplots(figsize=(8.0, 2.8))
 
-    # ── 画布 ─────────────────────────────────────────────────────
-    fig, (ax_top, ax_hm) = plt.subplots(
-        2, 1, figsize=(8.0, 4.2),
-        gridspec_kw={"height_ratios": [1.4, 1.0], "hspace": 0.08},
-        sharex=True
-    )
+    # 曲线背景填充
+    ax.fill_between(t_ds, agg_ds, 0,
+                    where=agg_ds >= 0, color="#c6dbef", alpha=0.6, lw=0)
+    # 检测到的区域（分数超阈值）
+    ax.fill_between(t_ds, agg_ds, threshold,
+                    where=agg_ds >= threshold,
+                    color="#d6604d", alpha=0.7, lw=0, zorder=3,
+                    label="Detected (score > threshold)")
+    # 真实异常区（绿色半透明）
+    _shade(ax, t_ds, y_ds, "#41ab5d", 0.30, "Ground truth anomaly")
+    # 分数曲线
+    ax.plot(t_ds, agg_ds, color="#2166ac", lw=0.7, zorder=4, label="Anomaly score")
+    # 阈值线
+    ax.axhline(threshold, color="#d6604d", ls="--", lw=1.4, zorder=5,
+               label=f"Threshold ε*={threshold:.3f}")
 
-    # ── 上层：聚合分数 ────────────────────────────────────────────
-    ax_top.fill_between(t_ds, agg_ds, 0,
-                        where=agg_ds >= 0, color="#c6dbef", alpha=0.75, lw=0)
-    ax_top.plot(t_ds, agg_ds, color="#2166ac", lw=0.7, label="Anomaly score", zorder=3)
-    ax_top.axhline(threshold, color="#d6604d", ls="--", lw=1.4, zorder=4,
-                   label=f"Threshold ε*={threshold:.3f}")
-    ax_top.fill_between(t_ds, agg_ds, threshold,
-                        where=agg_ds >= threshold,
-                        color="#d6604d", alpha=0.6, lw=0, zorder=3,
-                        label="Detected")
-    _shade(ax_top, t_ds, y_ds, "#27ae60", 0.20, "Ground truth")
-    ax_top.set_ylabel("Score", fontsize=8.5)
-    ax_top.legend(loc="upper right", fontsize=7.5, ncol=4,
-                  framealpha=0.9, edgecolor="none", columnspacing=0.8)
+    # 事件标注（竖虚线 + 标签，自动合并过近的）
+    ymax_data = max(agg_ds.max(), threshold) * 1.05
+    ax.set_ylim(0, ymax_data * 1.22)
+    ev_positions = [(s + e) / 2 for s, e in events]
+    _place_event_labels(ax, ev_positions, t_ds, ax.get_ylim()[1], factor)
 
-    # 事件标注：只标在顶部，用竖虚线 + 文字，相邻太近的合并标注
-    ymax = ax_top.get_ylim()[1] if ax_top.get_ylim()[1] > 0 else agg_ds.max() * 1.2
-    ev_positions = [(ev_s + ev_e) / 2 for ev_s, ev_e in events]
-    _place_event_labels(ax_top, ev_positions, t_ds, ymax, factor)
+    ax.set_xlabel("Time Step", fontsize=9)
+    ax.set_ylabel("Anomaly Score", fontsize=9)
+    ax.legend(loc="upper right", fontsize=8, ncol=4,
+              framealpha=0.9, edgecolor="none", columnspacing=0.7)
+    ax.set_xlim(t_ds[0], t_ds[-1])
 
-    # ── 下层：通道热图 ────────────────────────────────────────────
-    cmap = LinearSegmentedColormap.from_list(
-        "anomaly", ["#f7fbff", "#6baed6", "#08519c", "#67000d"])
-    im = ax_hm.imshow(
-        per_norm.T,                        # shape: [C, T_ds]
-        aspect="auto",
-        cmap=cmap,
-        vmin=0, vmax=1,
-        extent=[t_ds[0], t_ds[-1], C - 0.5, -0.5],
-        interpolation="nearest",
-        rasterized=True
-    )
-    # 真实异常事件：红色竖线
-    for ev_s, ev_e in events:
-        ax_hm.axvline(ev_s, color="#d6604d", lw=0.6, alpha=0.7)
-        ax_hm.axvline(ev_e, color="#d6604d", lw=0.6, alpha=0.7)
-        ax_hm.axvspan(ev_s, max(ev_e, ev_s + factor),
-                      color="#d6604d", alpha=0.22, lw=0)
-    ax_hm.set_yticks(range(C))
-    ax_hm.set_yticklabels([f"Ch {41+c}" for c in range(C)], fontsize=8)
-    ax_hm.set_xlabel("Time Step")
-    ax_hm.set_ylabel("Channel", fontsize=8.5)
-
-    # 色标
-    cbar = fig.colorbar(im, ax=ax_hm, pad=0.01, fraction=0.015,
-                        label="Normalized residual")
-    cbar.ax.tick_params(labelsize=7)
+    # 格式化 x 轴为 ×10⁶
+    ax.xaxis.set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda x, _: f"{x/1e6:.1f}"))
+    ax.set_xlabel("Time Step (×10⁶)", fontsize=9)
 
     fig.suptitle(
-        f"SpCA Anomaly Detection — ESA-AD Mission 1  "
-        f"(T={T:,}  |  {len(events)} events)",
-        fontsize=9, y=1.01
+        f"SpCA Anomaly Score — ESA-AD Mission 1  "
+        f"(T={T:,}, {len(events)} events, threshold={threshold:.3f})",
+        fontsize=9, y=1.02
     )
-
     _save(fig, out_dir / "fig_timeline.pdf")
 
 
@@ -487,7 +481,8 @@ def parse_args():
     p.add_argument("--spca_eval",  type=str, default=None)
     p.add_argument("--pstg_eval",  type=str, default=None,
                    help="PSTG eval 目录（可选，用于分数分布对比图）")
-    p.add_argument("--zoom_event", type=int, default=0)
+    p.add_argument("--zoom_event", type=int, default=-1,
+                   help="聚焦第几个事件（0-indexed）；-1=自动选最佳（默认）")
     p.add_argument("--context",    type=int, default=1500)
     p.add_argument("--channels",   type=int, nargs="+", default=None)
     p.add_argument("--out_dir",    type=str, default="paper_figures")
