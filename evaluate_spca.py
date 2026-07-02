@@ -384,11 +384,17 @@ def main():
     result_path = eval_mgr.save_results(metrics, info)
     score_path  = eval_mgr.save_scores(anomaly_scores)
     # raw_smoothed 也保存，方便后续诊断和阈值调试
-    np.save(eval_mgr.eval_dir / "raw_smoothed.npy", raw_smoothed)
-    np.save(eval_mgr.eval_dir / "y_true.npy",       y_true)
+    np.save(eval_mgr.eval_dir / "raw_smoothed.npy",         raw_smoothed)
+    np.save(eval_mgr.eval_dir / "y_true.npy",               y_true)
+    # 保存逐通道数据（用于配图生成：原始信号 + 预测重建 + 逐通道残差）
+    np.save(eval_mgr.eval_dir / "x_true.npy",               x_true.astype(np.float32))
+    np.save(eval_mgr.eval_dir / "x_pred.npy",               x_pred.astype(np.float32))
+    per_ch_res = np.abs(x_true - x_pred).astype(np.float32)  # [T, C]
+    np.save(eval_mgr.eval_dir / "per_channel_residuals.npy", per_ch_res)
     print(f"\n  → 指标：{result_path}")
     print(f"  → 分数：{score_path}")
     print(f"  → 原始残差：{eval_mgr.eval_dir}/raw_smoothed.npy")
+    print(f"  → 逐通道数据：{eval_mgr.eval_dir}/x_true.npy / x_pred.npy / per_channel_residuals.npy")
 
     # ── 绘图 ──────────────────────────────────────────────────────────────
     if not args.no_plot:
